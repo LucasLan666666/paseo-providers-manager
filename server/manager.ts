@@ -1,13 +1,16 @@
 import type { PaseoApi } from "./types";
 import { randomUUID } from "node:crypto";
-import type { Action, Binding } from "../shared/contracts";
+import type { Action, Binding, Operation } from "../shared/contracts";
+import { protocolInfo } from "../shared/protocols";
 import { agents } from "./agents";
 import { discover } from "./catalog";
 import { preparePatch, pruneGenerations } from "./registry";
 import { antigravityPickerId } from "./adapter-common";
 import {
+  effectiveLimits,
   findConnection,
   getBinding,
+  limitProblem,
   mergeCatalog,
   snapshotOf,
   type SavedConnection,
@@ -28,7 +31,7 @@ async function refresh(state: State, conn: SavedConnection) {
   }
 }
 
-function validateConnection(state: State, connection: SavedConnection) {
+export function validateConnection(state: State, connection: SavedConnection) {
   const issues = new Set<string>();
   const bound = state.bindings.filter(
     (binding) => binding.connection === connection.id,
@@ -44,27 +47,25 @@ function validateConnection(state: State, connection: SavedConnection) {
       if (!descriptor) continue;
       if (!descriptor.protocols.includes(connection.protocol)) {
         issues.add(
-          `${descriptor.label} 不支持该连接的 ${connection.protocol} 协议`,
+          `${descriptor.label} 不支持该连接的 ${protocolInfo[connection.protocol].label} 协议`,
         );
         continue;
       }
       if (binding.agent === "antigravity" && antigravityPickerId(model.id) === undefined)
         issues.add(`${name}：无法映射到 agy 内置模型`);
       if (!binding.selected.includes(model.id)) continue;
-      if (
-        ["pi", "omp", "opencode"].includes(binding.agent) &&
-        (!model.context || !model.output)
-      )
+      // Check the limits the generated config really uses (manual value →
+      // gateway/catalog → agent default), not only the catalog values.
+      const limits = effectiveLimits(state, binding, model);
+      const problem = limitProblem(binding.agent, limits);
+      if (problem === "missing")
         issues.add(
-          `${name}：${descriptor.label} 需要上下文窗口和最大输出`,
+          `${name}：${descriptor.label} 需要上下文窗口和最大输出（网关和目录没有提供，也没有手动值或 ${descriptor.label} 默认值）`,
         );
-      if (
-        ["pi", "omp", "opencode", "fx", "copilot"].includes(binding.agent) &&
-        model.context &&
-        model.output &&
-        model.output.value >= model.context.value
-      )
-        issues.add(`${name}：最大输出必须小于上下文窗口`);
+      if (problem === "order")
+        issues.add(
+          `${name}：${descriptor.label} 的最大输出 ${limits.output} 必须小于上下文窗口 ${limits.context}`,
+        );
     }
   }
   return [...issues];
@@ -118,11 +119,14 @@ export class Manager {
     });
   }
   action(action: Action, paseo: PaseoApi) {
-    return this.serial(async () => {
+    return this.serial(async (): Promise<Omit<Operation, "job">> => {
       const current = await this.storage.load(paseo);
       this.committed = current;
       const next = structuredClone(current);
       let message = "已保存";
+      let level: Operation["level"];
+      let savedConnection: string | undefined;
+      let testIssues = false;
       switch (action.type) {
         case "testConnection": {
           const conn = findConnection(next, action.connection);
@@ -132,15 +136,19 @@ export class Manager {
             break;
           }
           const issues = validateConnection(next, conn);
-          if (conn.models.length === 0)
+          if (conn.models.length === 0) {
             message = "目录没有模型，请检查网关的模型列表。";
-          else if (issues.length === 0)
+            level = "warning";
+          } else if (issues.length === 0)
             message = `已检查 ${conn.models.length} 个模型，全部通过。`;
-          else
+          else {
+            testIssues = true;
             message =
               `已检查 ${conn.models.length} 个模型，发现 ${issues.length} 个问题：\n` +
               issues.slice(0, 8).join("\n") +
               (issues.length > 8 ? `\n…另有 ${issues.length - 8} 个问题` : "");
+            level = "warning";
+          }
           break;
         }
         case "saveConnection": {
@@ -171,6 +179,15 @@ export class Manager {
           ) {
             throw new Error("网关域名或端口变更，请为新地址重新输入 Key。");
           }
+          // A copied connection may reuse the source key, but only for the same
+          // origin: the key must never be sent to a host it was not saved for.
+          let copiedKey: string | undefined;
+          if (!action.id && action.copyKeyFrom && !action.key) {
+            const source = findConnection(next, action.copyKeyFrom);
+            if (new URL(source.url).origin !== url.origin)
+              throw new Error("复制的连接更换了域名或端口，请重新输入 Key。");
+            copiedKey = source.key;
+          }
           if (
             conn.protocol !== action.protocol &&
             next.bindings.some(
@@ -178,19 +195,32 @@ export class Manager {
             )
           )
             throw new Error("请先停用使用该连接的模型，再切换协议。");
+          const protocolChanged = action.id !== undefined && conn.protocol !== action.protocol;
           Object.assign(conn, {
             name,
             url: action.url.replace(/\/+$/, ""),
             protocol: action.protocol,
             catalogProvider: action.catalogProvider,
-            key: action.key ?? conn.key,
+            // A copy with a blank key field uses the source key.
+            key: action.key ? action.key : copiedKey ?? action.key ?? conn.key,
           });
           conn.hasKey = !!conn.key;
           if (!action.id) next.connections.push(conn);
+          // Bindings left on this connection have no selected models (the guard
+          // above). Drop the ones whose agent cannot use the new protocol, so
+          // they don't linger as an incompatible card on that agent's page.
+          if (protocolChanged)
+            next.bindings = next.bindings.filter(
+              (b) =>
+                b.connection !== conn.id ||
+                agents.find((a) => a.id === b.agent)?.protocols.includes(conn.protocol),
+            );
+          savedConnection = conn.id;
           await refresh(next, conn);
-          message = conn.error
-            ? "连接已保存，目录加载失败：" + conn.error
-            : "连接已保存，模型目录已更新。";
+          if (conn.error) {
+            message = "连接已保存，目录加载失败：" + conn.error;
+            level = "warning";
+          } else message = "连接已保存，模型目录已更新。";
           break;
         }
         case "deleteConnection":
@@ -216,7 +246,9 @@ export class Manager {
           );
           if (!stale.length) return { message: "目录已是最新" };
           await Promise.all(stale.map((c) => refresh(next, c)));
-          message = `已检查 ${stale.length} 个连接，失败 ${stale.filter((c) => c.error).length} 个。`;
+          const failed = stale.filter((c) => c.error).length;
+          message = `已检查 ${stale.length} 个连接，失败 ${failed} 个。`;
+          if (failed) level = "warning";
           break;
         }
         case "defaults":
@@ -249,7 +281,21 @@ export class Manager {
           break;
         }
       }
-      const patch = await preparePatch(this.storage.root, current, next, paseo);
+      let patch: Awaited<ReturnType<typeof preparePatch>>;
+      try {
+        patch = await preparePatch(this.storage.root, current, next, paseo);
+      } catch (error) {
+        // The refreshed catalog can make a selected model unusable (for example
+        // the gateway now reports output >= context). A test should list that
+        // problem instead of failing with one raw error; the refreshed catalog
+        // is not saved, so the working configuration stays in place.
+        if (action.type === "testConnection" && testIssues)
+          return {
+            message: `${message}\n（因存在以上问题，本次获取的目录未保存，现有配置保持不变。）`,
+            level: "warning",
+          };
+        throw error;
+      }
       await this.storage.commit(next, patch, paseo);
       this.committed = next;
       await pruneGenerations(this.storage.root, paseo).catch(() => {});
@@ -262,7 +308,11 @@ export class Manager {
         const conn = findConnection(next, action.connection);
         if (conn.error) throw new Error(conn.error);
       }
-      return { message };
+      return {
+        message,
+        ...(level ? { level } : {}),
+        ...(savedConnection ? { connection: savedConnection } : {}),
+      };
     });
   }
 }

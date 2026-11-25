@@ -1,4 +1,5 @@
 import type { Capacity, Protocol } from "../shared/contracts";
+import { protocolInfo } from "../shared/protocols";
 
 /** Refresh data older than this is considered stale in the UI. */
 export const STALE_AFTER_MS = 24 * 60 * 60 * 1000;
@@ -77,30 +78,19 @@ export function parseTokens(input: string): ParsedTokens {
   return { value };
 }
 
+/** Short protocol name for badges, e.g. "OpenAI Chat". */
 export function protocolLabel(protocol: Protocol): string {
-  switch (protocol) {
-    case "chat":
-      return "Chat";
-    case "responses":
-      return "Responses";
-    case "anthropic":
-      return "Anthropic";
-    case "gemini":
-      return "Gemini";
-  }
+  return protocolInfo[protocol].short;
 }
 
+/** Full protocol name for choices, e.g. "OpenAI Chat Completions". */
+export function protocolFullLabel(protocol: Protocol): string {
+  return protocolInfo[protocol].label;
+}
+
+/** The request the gateway must serve for this protocol. */
 export function protocolDescription(protocol: Protocol): string {
-  switch (protocol) {
-    case "chat":
-      return "OpenAI Chat Completions";
-    case "responses":
-      return "OpenAI Responses API";
-    case "anthropic":
-      return "Anthropic Messages";
-    case "gemini":
-      return "Google Gemini";
-  }
+  return protocolInfo[protocol].endpoint;
 }
 
 export function sourceLabel(source: Capacity["source"]): string {

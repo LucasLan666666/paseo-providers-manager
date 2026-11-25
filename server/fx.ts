@@ -2,6 +2,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Limits } from "../shared/contracts";
 import type { SavedConnection } from "./state";
+import { openAiBase } from "./adapter-common";
 
 export async function fxProvider(
   connection: SavedConnection,
@@ -23,7 +24,10 @@ export async function fxProvider(
     providers: {
       managed: {
         protocol: transport[connection.protocol],
-        base_url: connection.url,
+        // Same base as discovery and the other adapters: a host-root OpenAI
+        // URL means {host}/v1. Anthropic bases are passed through unchanged.
+        base_url:
+          connection.protocol === "anthropic" ? connection.url : openAiBase(connection.url),
         auth: connection.key
           ? { type: "bearer", env: "PPM_GATEWAY_KEY" }
           : { type: "none" },

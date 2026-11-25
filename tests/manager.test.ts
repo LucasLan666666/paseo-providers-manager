@@ -139,3 +139,215 @@ test("catalog refresh, opt-in selection, shared bindings, conflicts, delisting a
     await rm(root, { recursive: true, force: true });
   }
 });
+
+async function gateway(rows: () => unknown[]) {
+  // Keep these tests offline: the models.dev enrichment would otherwise fetch
+  // live data for models without limits.
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+    const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
+    if (url.hostname === "127.0.0.1" || url.hostname === "localhost") return realFetch(input, init);
+    throw new Error(`blocked external request to ${url.hostname}`);
+  }) as typeof fetch;
+  const server = createServer((req, res) => {
+    const ok = req.headers.authorization === "Bearer test-key";
+    res.writeHead(ok ? 200 : 401, { "content-type": "application/json" });
+    res.end(JSON.stringify(ok ? { data: rows() } : { error: "unauthorized" }));
+  });
+  const sockets = new Set<Socket>();
+  server.on("connection", (s) => {
+    sockets.add(s);
+    s.on("close", () => sockets.delete(s));
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const providers: Record<string, unknown> = {};
+  const api = {
+    config: {
+      get: async () => ({ config: { providers } }),
+      patch: async (patch: { providers: Record<string, unknown>; removeProviders: string[] }) => {
+        Object.assign(providers, patch.providers);
+        for (const key of patch.removeProviders) delete providers[key];
+      },
+    },
+  } as unknown as PaseoApi;
+  const root = await mkdtemp(join(tmpdir(), "ppm-manager-"));
+  return {
+    port: address.port,
+    api,
+    providers,
+    manager: new Manager(root),
+    async close() {
+      globalThis.fetch = realFetch;
+      for (const socket of sockets) socket.destroy();
+      server.close();
+      await rm(root, { recursive: true, force: true });
+    },
+  };
+}
+
+test("test all models checks the limits the config really uses (agent defaults, overrides)", async () => {
+  let rows: unknown[] = [{ id: "m1" }];
+  const g = await gateway(() => rows);
+  try {
+    const saved = await g.manager.action(
+      {
+        type: "saveConnection",
+        name: "Relay",
+        url: `http://127.0.0.1:${g.port}/v1`,
+        protocol: "chat",
+        key: "test-key",
+        catalogProvider: "",
+      },
+      g.api,
+    );
+    const connection = saved.connection;
+    assert.ok(connection, "saveConnection returns the connection id");
+    // The gateway reports no limits; Pi gets them from the agent defaults.
+    await g.manager.action({ type: "defaults", agent: "pi", context: 64000, output: 4096 }, g.api);
+    await g.manager.action({ type: "selection", agent: "pi", connection, selected: ["m1"] }, g.api);
+    assert.ok(g.providers["ppm-pi-" + connection]);
+    const passed = await g.manager.action({ type: "testConnection", connection }, g.api);
+    assert.match(passed.message, /全部通过/);
+    assert.equal(passed.level, undefined);
+    // A real issue is reported as a warning, not a success.
+    rows = [];
+    const warned = await g.manager.action({ type: "testConnection", connection }, g.api);
+    assert.match(warned.message, /发现 1 个问题/);
+    assert.match(warned.message, /网关目录未列出/);
+    assert.equal(warned.level, "warning");
+  } finally {
+    await g.close();
+  }
+});
+
+test("a copied connection reuses the source key only on the same origin", async () => {
+  const g = await gateway(() => [{ id: "m1" }]);
+  try {
+    const base = {
+      type: "saveConnection" as const,
+      url: `http://127.0.0.1:${g.port}/v1`,
+      catalogProvider: "",
+    };
+    const source = (
+      await g.manager.action({ ...base, name: "Chat", protocol: "chat", key: "test-key" }, g.api)
+    ).connection!;
+    const copy = await g.manager.action(
+      { ...base, name: "Responses", protocol: "responses", copyKeyFrom: source },
+      g.api,
+    );
+    assert.equal(copy.level, undefined, copy.message);
+    const snapshot = await g.manager.snapshot(g.api);
+    const created = snapshot.connections.find((c) => c.id === copy.connection);
+    assert.equal(created?.hasKey, true);
+    assert.equal(created?.error, null);
+    // A blank key field on a copy also means "use the source key".
+    const blank = await g.manager.action(
+      { ...base, name: "Blank key", protocol: "responses", key: "", copyKeyFrom: source },
+      g.api,
+    );
+    assert.equal(blank.level, undefined, blank.message);
+    await assert.rejects(
+      g.manager.action(
+        {
+          ...base,
+          url: `http://localhost:${g.port}/v1`,
+          name: "Other origin",
+          protocol: "responses",
+          copyKeyFrom: source,
+        },
+        g.api,
+      ),
+      /重新输入 Key/,
+    );
+  } finally {
+    await g.close();
+  }
+});
+
+test("switching protocol drops empty bindings of agents that cannot use it", async () => {
+  const g = await gateway(() => [{ id: "m1" }]);
+  try {
+    const action = {
+      type: "saveConnection" as const,
+      name: "Relay",
+      url: `http://127.0.0.1:${g.port}/v1`,
+      catalogProvider: "",
+      key: "test-key",
+    };
+    const connection = (await g.manager.action({ ...action, protocol: "responses" }, g.api)).connection!;
+    await g.manager.action({ type: "selection", agent: "codex", connection, selected: [] }, g.api);
+    await g.manager.action({ type: "selection", agent: "pi", connection, selected: [] }, g.api);
+    await g.manager.action({ ...action, id: connection, protocol: "chat" }, g.api);
+    const agents = (await g.manager.snapshot(g.api)).bindings.map((b) => b.agent);
+    assert.deepEqual(agents, ["pi"]);
+  } finally {
+    await g.close();
+  }
+});
+
+test("configs written before PPM_FINGERPRINT regenerate only when the written base URL changes", async () => {
+  const g = await gateway(() => [{ id: "m1", context_length: 64000, max_output_tokens: 4096 }]);
+  try {
+    const save = async (url: string) =>
+      (
+        await g.manager.action(
+          { type: "saveConnection", name: url, url, protocol: "responses", key: "test-key", catalogProvider: "" },
+          g.api,
+        )
+      ).connection!;
+    const root = await save(`http://127.0.0.1:${g.port}`);
+    const v1 = await save(`http://127.0.0.1:${g.port}/v1`);
+    for (const connection of [root, v1])
+      await g.manager.action({ type: "selection", agent: "codex", connection, selected: ["m1"] }, g.api);
+    const env = (id: string) => (g.providers["ppm-codex-" + id] as { env: Record<string, string> }).env;
+    // Simulate providers generated by the previous version (no PPM_FINGERPRINT).
+    for (const id of [root, v1]) delete env(id).PPM_FINGERPRINT;
+    const before = { root: env(root).PPM_GENERATION, v1: env(v1).PPM_GENERATION };
+    // Any action re-plans every provider.
+    await g.manager.action({ type: "defaults", agent: "pi", context: 64000, output: 4096 }, g.api);
+    assert.notEqual(env(root).PPM_GENERATION, before.root, "host-root config regenerates");
+    assert.ok(env(root).PPM_FINGERPRINT);
+    assert.equal(env(v1).PPM_GENERATION, before.v1, "a URL that already has /v1 is left alone");
+    const toml = await readFile(join(env(root).CODEX_HOME, "config.toml"), "utf8");
+    assert.match(toml, /base_url = "http:\/\/127\.0\.0\.1:\d+\/v1"/);
+    // Once stamped, an unchanged provider is not regenerated again.
+    const stamped = env(root).PPM_GENERATION;
+    await g.manager.action({ type: "defaults", agent: "pi", context: 64000, output: 2048 }, g.api);
+    assert.equal(env(root).PPM_GENERATION, stamped);
+  } finally {
+    await g.close();
+  }
+});
+
+test("a test lists limits that the refreshed catalog breaks, and keeps the working catalog", async () => {
+  let rows: unknown[] = [{ id: "m1", context_length: 64000, max_output_tokens: 4096 }];
+  const g = await gateway(() => rows);
+  try {
+    const connection = (
+      await g.manager.action(
+        {
+          type: "saveConnection",
+          name: "Relay",
+          url: `http://127.0.0.1:${g.port}/v1`,
+          protocol: "chat",
+          key: "test-key",
+          catalogProvider: "",
+        },
+        g.api,
+      )
+    ).connection!;
+    await g.manager.action({ type: "selection", agent: "pi", connection, selected: ["m1"] }, g.api);
+    rows = [{ id: "m1", context_length: 1000, max_output_tokens: 2000 }];
+    const tested = await g.manager.action({ type: "testConnection", connection }, g.api);
+    assert.equal(tested.level, "warning");
+    assert.match(tested.message, /最大输出 2000 必须小于上下文窗口 1000/);
+    assert.match(tested.message, /未保存/);
+    const model = (await g.manager.snapshot(g.api)).connections[0].models[0];
+    assert.equal(model.context?.value, 64000);
+  } finally {
+    await g.close();
+  }
+});

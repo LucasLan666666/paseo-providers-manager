@@ -1,9 +1,18 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Icon } from "@getpaseo/plugin/client/ui";
-import { View } from "react-native";
-import { protocols, type Action, type Connection, type Protocol } from "../shared/contracts";
+import { Text, View } from "react-native";
+import {
+  protocols,
+  type Action,
+  type AgentId,
+  type Binding,
+  type Connection,
+  type Protocol,
+} from "../shared/contracts";
 import type { AgentDescriptor } from "./derive";
-import { protocolDescription, protocolLabel } from "./format";
+import { protocolDescription, protocolFullLabel } from "./format";
+import type { FormPreset } from "./screenState";
+import type { RunOptions } from "./useManager";
 import {
   Badge,
   Btn,
@@ -13,57 +22,127 @@ import {
   Sheet,
   TextField,
   useLayout,
+  useTokens,
 } from "./ui";
 
 type FormErrors = {
   name?: string;
   url?: string;
+  protocol?: string;
+  key?: string;
 };
+
+function originOf(raw: string): string | undefined {
+  try {
+    return new URL(raw.trim()).origin;
+  } catch {
+    return undefined;
+  }
+}
+
+/** OpenAI bases without a path are used as `{host}/v1` (server openAiBase). */
+function impliedV1(raw: string, protocol: Protocol | null): string | undefined {
+  if (protocol !== "chat" && protocol !== "responses") return undefined;
+  try {
+    const url = new URL(raw.trim());
+    if (url.pathname !== "/" && url.pathname !== "") return undefined;
+    return `${url.origin}/v1`;
+  } catch {
+    return undefined;
+  }
+}
 
 export function ConnectionForm({
   open,
   connection,
-  agent,
+  agents,
+  bindings,
+  connections,
+  origin,
+  preset,
   onClose,
   onSaved,
+  onCopy,
   run,
   busy,
 }: {
   open: boolean;
   connection: Connection | null;
-  agent?: AgentDescriptor;
+  agents: readonly AgentDescriptor[];
+  bindings: readonly Binding[];
+  connections: readonly Connection[];
+  /** The agent whose page opened the form; undefined from the top bar or library. */
+  origin?: AgentDescriptor;
+  preset?: FormPreset;
   onClose: () => void;
-  onSaved?: () => void;
-  run: (action: Action, options?: { key?: string; toast?: boolean }) => Promise<boolean>;
+  onSaved?: (connectionId: string | undefined, protocol: Protocol) => void;
+  onCopy?: (connection: Connection) => void;
+  run: (action: Action, options?: RunOptions) => Promise<boolean>;
   busy: boolean;
 }) {
   const { theme, compact } = useLayout();
+  const t = useTokens(theme, compact);
   const editing = Boolean(connection);
-  const [name, setName] = useState(connection?.name ?? "");
-  const [url, setUrl] = useState(connection?.url ?? "");
-  const [protocol, setProtocol] = useState<Protocol>(
-    connection?.protocol ?? agent?.protocols[0] ?? "chat",
+  const copySource = !editing && preset?.copyFrom
+    ? connections.find((item) => item.id === preset.copyFrom)
+    : undefined;
+
+  // A remembered "switch protocol" preset no longer applies once an agent has
+  // enabled models on the connection (the protocol is locked then).
+  const lockedNow = connection
+    ? bindings.some((binding) => binding.connection === connection.id && binding.selected.length > 0)
+    : false;
+  const initialProtocol = (): Protocol | null =>
+    (lockedNow ? undefined : preset?.protocol) ??
+    connection?.protocol ??
+    // Only preselect when the opening agent leaves no choice. The top bar used to
+    // default to "chat", which is how Responses-only gateways ended up as Chat.
+    (origin && origin.protocols.length === 1 ? origin.protocols[0] : null);
+
+  const [name, setName] = useState(preset?.name ?? connection?.name ?? "");
+  const [url, setUrl] = useState(preset?.url ?? connection?.url ?? "");
+  const [protocol, setProtocol] = useState<Protocol | null>(initialProtocol);
+  const [catalogProvider, setCatalogProvider] = useState(
+    preset?.catalogProvider ?? connection?.catalogProvider ?? "",
   );
-  const [catalogProvider, setCatalogProvider] = useState(connection?.catalogProvider ?? "");
   const [key, setKey] = useState("");
   const [errors, setErrors] = useState<FormErrors>({});
   const [saving, setSaving] = useState(false);
+  const presetKey = JSON.stringify(preset ?? null);
 
   useEffect(() => {
     if (!open) return;
-    setName(connection?.name ?? "");
-    setUrl(connection?.url ?? "");
-    setProtocol(connection?.protocol ?? agent?.protocols[0] ?? "chat");
-    setCatalogProvider(connection?.catalogProvider ?? "");
+    setName(preset?.name ?? connection?.name ?? "");
+    setUrl(preset?.url ?? connection?.url ?? "");
+    setProtocol(initialProtocol());
+    setCatalogProvider(preset?.catalogProvider ?? connection?.catalogProvider ?? "");
     setKey("");
     setErrors({});
     setSaving(false);
-  }, [open, connection?.id, agent?.id]);
+    // initialProtocol only reads the values listed here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, connection?.id, origin?.id, presetKey]);
 
-  const compatible = useMemo(
-    () => (agent ? agent.protocols.includes(protocol) : true),
-    [agent, protocol],
-  );
+  const agentLabel = (id: AgentId) => agents.find((agent) => agent.id === id)?.label ?? id;
+  const gatewayAgents = agents.filter((agent) => agent.protocols.length > 0);
+  const supporters = (option: Protocol) =>
+    gatewayAgents.filter((agent) => agent.protocols.includes(option));
+
+  const usage = connection ? bindings.filter((binding) => binding.connection === connection.id) : [];
+  const inUse = usage.filter((binding) => binding.selected.length > 0);
+  // Mirrors the server: a protocol change is refused while any agent has models enabled.
+  const locked = editing && inUse.length > 0;
+  const changed = editing && protocol !== null && protocol !== connection?.protocol;
+  const dropped = changed
+    ? usage.filter(
+        (binding) => !agents.find((agent) => agent.id === binding.agent)?.protocols.includes(protocol!),
+      )
+    : [];
+  const droppedOverrides = dropped.some((binding) => Object.keys(binding.overrides).length > 0);
+  const originMismatch = origin && protocol !== null && !origin.protocols.includes(protocol);
+  const v1 = impliedV1(url, protocol);
+  const copyOriginChanged =
+    copySource !== undefined && originOf(url) !== undefined && originOf(url) !== originOf(copySource.url);
 
   const handleSave = async () => {
     const nextErrors: FormErrors = {};
@@ -74,7 +153,10 @@ export function ConnectionForm({
     else if (!/^https?:\/\/\S+$/i.test(trimmedUrl)) {
       nextErrors.url = "地址必须以 http:// 或 https:// 开头";
     }
-    if (Object.keys(nextErrors).length > 0) {
+    if (!protocol) nextErrors.protocol = "请选择网关提供的协议";
+    if (copyOriginChanged && !key.trim())
+      nextErrors.key = `域名或端口与「${copySource?.name}」不同，请输入这个地址的 API 密钥`;
+    if (Object.keys(nextErrors).length > 0 || !protocol) {
       setErrors(nextErrors);
       return;
     }
@@ -87,15 +169,35 @@ export function ConnectionForm({
       protocol,
       catalogProvider: catalogProvider.trim(),
       ...(key.trim() ? { key: key.trim() } : {}),
+      ...(copySource ? { copyKeyFrom: copySource.id } : {}),
     };
     setSaving(true);
-    const saved = await run(action, { key: "saveConnection" });
+    let savedId: string | undefined;
+    const saved = await run(action, {
+      key: "saveConnection",
+      onSuccess: (result) => {
+        savedId = result.connection;
+      },
+    });
     setSaving(false);
     if (saved) {
       onClose();
-      onSaved?.();
+      onSaved?.(savedId, protocol);
     }
   };
+
+  const keyHint = copySource
+    ? `留空则沿用「${copySource.name}」的密钥（仅限同一域名和端口）。`
+    : editing
+      ? connection?.hasKey
+        ? "已保存密钥。留空保持不变；输入新值才会替换。"
+        : "当前没有保存密钥。留空则仍不保存密钥。"
+      : "密钥仅保存在本机 daemon 侧的插件数据中，生成 Agent 配置时会提供给 CLI 访问网关。";
+  const keyPlaceholder = copySource
+    ? "留空沿用原连接的密钥"
+    : editing && connection?.hasKey
+      ? "留空以保留现有密钥"
+      : "可留空，稍后再配置";
 
   return (
     <Sheet
@@ -103,7 +205,7 @@ export function ConnectionForm({
       onOpenChange={(next) => {
         if (!next && !saving) onClose();
       }}
-      title={editing ? "编辑连接" : "新建连接"}
+      title={editing ? "编辑连接" : copySource ? "复制连接" : "新建连接"}
       icon={<Icon name="Server" size={18} color={theme.colors.accent} />}
       testID="ppm-connection-form"
       footer={
@@ -152,56 +254,100 @@ export function ConnectionForm({
         value={url}
         onChangeText={(value) => {
           setUrl(value);
-          if (errors.url) setErrors((current) => ({ ...current, url: undefined }));
+          if (errors.url || errors.key)
+            setErrors((current) => ({ ...current, url: undefined, key: undefined }));
         }}
         placeholder="https://gateway.example.com/v1"
+        hint={v1 ? `未填写路径，将按 ${v1} 访问` : undefined}
         error={errors.url}
         keyboardType="url"
         editable={!saving}
         testID="ppm-connection-url"
       />
 
-      <Field label="协议" hint={protocolDescription(protocol)} required>
-        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 7 }}>
-          {protocols.map((option) => (
-            <Chip
-              key={option}
-              label={protocolLabel(option)}
-              selected={protocol === option}
-              onPress={() => setProtocol(option)}
-              disabled={saving}
-              testID={`ppm-protocol-${option}`}
-            />
-          ))}
+      <Field
+        label="协议"
+        hint={protocol ? protocolDescription(protocol) : "按网关文档中的请求地址选择"}
+        required
+      >
+        <View style={{ gap: 8 }}>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 7 }}>
+            {protocols.map((option) => (
+              <Chip
+                key={option}
+                label={protocolFullLabel(option)}
+                selected={protocol === option}
+                onPress={() => {
+                  setProtocol(option);
+                  if (errors.protocol) setErrors((current) => ({ ...current, protocol: undefined }));
+                }}
+                disabled={saving || (locked && option !== connection?.protocol)}
+                testID={`ppm-protocol-${option}`}
+              />
+            ))}
+          </View>
+          {protocol ? (
+            <Text style={t.tiny}>
+              可用于：{supporters(protocol).map((agent) => agent.label).join(" · ") || "无"}
+            </Text>
+          ) : (
+            <Text style={t.tiny}>
+              …/chat/completions → OpenAI Chat Completions；…/responses → OpenAI Responses；…/v1/messages →
+              Anthropic Messages；…:generateContent → Google Gemini。
+            </Text>
+          )}
+          {errors.protocol ? (
+            <Text style={[t.tiny, { color: theme.colors.statusDanger }]}>{errors.protocol}</Text>
+          ) : null}
         </View>
       </Field>
 
-      {!compatible && agent ? (
-        <Notice tone="warning" title="协议与当前 Agent 不兼容">
-          该连接使用 {protocolLabel(protocol)}，而 {agent.label} 支持{" "}
-          {agent.protocols.map(protocolLabel).join(" / ")}。保存后它只能用于支持该协议的 Agent。
+      {originMismatch && origin && protocol ? (
+        <Notice tone="warning" title={`${origin.label} 不能使用 ${protocolFullLabel(protocol)}`}>
+          {origin.label} 需要 {origin.protocols.map(protocolFullLabel).join(" / ")}。按当前协议保存后，这个连接不会出现在{" "}
+          {origin.label} 的连接列表中。
+        </Notice>
+      ) : null}
+
+      {locked && connection ? (
+        <Notice
+          tone="accent"
+          title="协议已锁定"
+          action={
+            onCopy ? (
+              <Btn label="复制为新连接" size="sm" variant="ghost" onPress={() => onCopy(connection)} />
+            ) : undefined
+          }
+        >
+          {inUse.map((binding) => `${agentLabel(binding.agent)}（${binding.selected.length} 个模型）`).join("、")}{" "}
+          正在使用这个连接。要更换协议，请先在这些 Agent 中停用它的模型；如果网关同时提供其他协议，可以复制一个新连接。
+        </Notice>
+      ) : null}
+
+      {dropped.length && protocol ? (
+        <Notice tone="warning" title="保存后这些 Agent 将移除此连接">
+          {dropped.map((binding) => agentLabel(binding.agent)).join("、")} 不支持 {protocolFullLabel(protocol)}
+          。它们还没有启用这个连接的模型，保存后会从各自的连接列表中移除
+          {droppedOverrides ? "，在此连接上填写的手动限额也会一并删除" : ""}。
         </Notice>
       ) : null}
 
       <TextField
         label={editing ? "替换 API 密钥" : "API 密钥"}
         value={key}
-        onChangeText={setKey}
-        placeholder={editing && connection?.hasKey ? "留空以保留现有密钥" : "可留空，稍后再配置"}
-        hint={
-          editing
-            ? connection?.hasKey
-              ? "已保存密钥。留空保持不变；输入新值才会替换。"
-              : "当前没有保存密钥。留空则仍不保存密钥。"
-            : "密钥仅保存在本机 daemon 侧的插件数据中，生成 Agent 配置时会提供给 CLI 访问网关。"
-        }
+        onChangeText={(value) => {
+          setKey(value);
+          if (errors.key) setErrors((current) => ({ ...current, key: undefined }));
+        }}
+        placeholder={keyPlaceholder}
+        hint={keyHint}
+        error={errors.key}
         secure
         allowReveal
         editable={!saving}
         testID="ppm-connection-key"
         trailing={connection?.hasKey ? <Badge tone="success" label="已保存" /> : undefined}
       />
-
     </Sheet>
   );
 }

@@ -5,6 +5,7 @@ import type { AgentId, Connection, Snapshot } from "../shared/contracts";
 import { agentDescriptor, agentsUsing, isStaleConnection } from "./derive";
 import {
   formatRelativeTime,
+  protocolFullLabel,
   protocolLabel,
   refreshLabel,
 } from "./format";
@@ -53,7 +54,8 @@ export function ConnectionLibrary({
         connection.name.toLowerCase().includes(normalized) ||
         connection.url.toLowerCase().includes(normalized) ||
         connection.catalogProvider.toLowerCase().includes(normalized) ||
-        connection.protocol.toLowerCase().includes(normalized)
+        connection.protocol.toLowerCase().includes(normalized) ||
+        protocolFullLabel(connection.protocol).toLowerCase().includes(normalized)
       ) {
         return true;
       }
@@ -79,7 +81,7 @@ export function ConnectionLibrary({
           <EmptyState
             icon="Server"
             title="连接库为空"
-            description="添加一个 OpenAI 兼容网关、Anthropic 或 Gemini 连接，然后为 Agent 选择模型。"
+            description="添加一个 OpenAI Chat Completions、OpenAI Responses、Anthropic Messages 或 Google Gemini 网关连接，然后为 Agent 选择模型。"
             action={
               <Btn label="新建第一个连接" variant="primary" icon="Plus" onPress={onNew} />
             }
@@ -136,6 +138,9 @@ function LibraryCard({
   const t = useTokens(theme, compact);
   const now = Date.now();
   const agents = agentsUsing(snapshot, connection.id);
+  const gatewayAgents = snapshot.agents.filter((agent) => agent.protocols.length > 0);
+  const usable = gatewayAgents.filter((agent) => agent.protocols.includes(connection.protocol));
+  const blocked = gatewayAgents.filter((agent) => !agent.protocols.includes(connection.protocol));
   const refreshing = busy === `refresh:${connection.id}`;
   const testing = busy === `testConnection:${connection.id}`;
   const stale = isStaleConnection(connection, now);
@@ -236,8 +241,19 @@ function LibraryCard({
             })}
           </View>
         ) : (
-          <Text style={t.tiny}>尚未被任何 Agent 使用。在 Agent 页面点击“添加连接”即可复用。</Text>
+          <Text style={t.tiny}>尚未被任何 Agent 使用。在可用的 Agent 页面点击“添加连接”即可复用。</Text>
         )}
+        <Text style={t.tiny}>
+          可用于：{usable.map((agent) => agent.label).join(" · ") || "无"}
+        </Text>
+        {blocked.length ? (
+          <Text style={t.tiny}>
+            不适用：
+            {blocked
+              .map((agent) => `${agent.label}（需 ${agent.protocols.map(protocolLabel).join(" / ")}）`)
+              .join("，")}
+          </Text>
+        ) : null}
       </View>
 
       <View

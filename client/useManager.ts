@@ -5,6 +5,7 @@ import {
   actionRpc,
   snapshotRpc,
   type Action,
+  type Operation,
   type Snapshot,
 } from "../shared/contracts";
 import { errorMessage } from "./format";
@@ -16,6 +17,8 @@ export interface RunOptions {
   reload?: boolean;
   /** Prepended to an error toast so failures stay in the UI's language. */
   errorPrefix?: string;
+  /** Runs after a successful action and the snapshot reload. */
+  onSuccess?: (result: Operation) => void;
 }
 
 export interface ManagerState {
@@ -81,9 +84,10 @@ export function useManager(): ManagerState {
     async (options: { silent?: boolean } = {}): Promise<boolean> => {
       setAutoRefreshing(true);
       try {
-        const { message } = await invoke({ type: "refreshStale" });
+        const { message, level } = await invoke({ type: "refreshStale" });
         if (mounted.current) setAutoRefreshError(null);
-        if (!options.silent && message.trim()) toastRef.current.show(message, { variant: "success" });
+        if (!options.silent && message.trim())
+          toastRef.current.show(message, { variant: level ?? "success" });
         await reload();
         return true;
       } catch (error) {
@@ -117,11 +121,14 @@ export function useManager(): ManagerState {
     async (action: Action, options: RunOptions = {}): Promise<boolean> => {
       setBusy(options.key ?? action.type);
       try {
-        const { message } = await invoke(action);
-        if (options.toast !== false && message.trim()) {
-          toastRef.current.show(message, { variant: "success" });
+        const result = await invoke(action);
+        // Problems found by a check come back as a normal result, not an error;
+        // show them as a warning instead of a green success toast.
+        if (options.toast !== false && result.message.trim()) {
+          toastRef.current.show(result.message, { variant: result.level ?? "success" });
         }
         if (options.reload !== false) await reload();
+        options.onSuccess?.(result);
         return true;
       } catch (error) {
         const detail = errorMessage(error);

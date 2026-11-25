@@ -7,6 +7,7 @@ import {
   type Action,
   type AgentId,
   type Connection,
+  type Protocol,
   type Snapshot,
 } from "../shared/contracts";
 import { AgentRail } from "./AgentRail";
@@ -14,6 +15,7 @@ import { AgentView } from "./AgentView";
 import { ConnectionForm } from "./ConnectionForm";
 import { ConnectionLibrary } from "./ConnectionLibrary";
 import { agentsUsing, bindingFor, connectionById } from "./derive";
+import { protocolLabel } from "./format";
 import { ModelSheet } from "./ModelSheet";
 import {
   readScreenMemory,
@@ -21,6 +23,7 @@ import {
   rememberForm,
   rememberModelConnection,
   rememberView,
+  type FormPreset,
   type ScreenForm,
   type ScreenView,
 } from "./screenState";
@@ -37,8 +40,6 @@ import {
   useLayout,
   useTokens,
 } from "./ui";
-
-type FormMode = "closed" | "create" | "edit";
 
 interface BootState {
   view: ScreenView;
@@ -90,16 +91,7 @@ function Manager(props: PluginScreenProps) {
   const [modelConnectionId, setModelConnectionId] = useState<string | null>(
     boot.modelConnectionId,
   );
-  const [formMode, setFormMode] = useState<FormMode>(
-    boot.form?.kind === "edit"
-      ? "edit"
-      : boot.form?.kind === "create"
-        ? "create"
-        : "closed",
-  );
-  const [formConnectionId, setFormConnectionId] = useState<string | null>(
-    boot.form?.kind === "edit" ? boot.form.connectionId : null,
-  );
+  const [form, setForm] = useState<ScreenForm | null>(boot.form);
   const [deleteTarget, setDeleteTarget] = useState<Connection | null>(null);
   const [autoErrorDismissed, setAutoErrorDismissed] = useState(false);
 
@@ -107,11 +99,14 @@ function Manager(props: PluginScreenProps) {
   const descriptor =
     snapshot?.agents.find((agent) => agent.id === activeAgentId) ?? null;
   const formConnection =
-    snapshot && formMode === "edit" && formConnectionId
-      ? connectionById(snapshot, formConnectionId) ?? null
+    snapshot && form?.kind === "edit"
+      ? connectionById(snapshot, form.connectionId) ?? null
       : null;
   const formActive =
-    formMode === "create" || (formMode === "edit" && Boolean(formConnection));
+    form?.kind === "create" || (form?.kind === "edit" && Boolean(formConnection));
+  const formOrigin = form?.origin
+    ? snapshot?.agents.find((agent) => agent.id === form.origin)
+    : undefined;
 
   useEffect(() => {
     setAutoErrorDismissed(false);
@@ -130,11 +125,8 @@ function Manager(props: PluginScreenProps) {
   }, [modelConnectionId]);
 
   useEffect(() => {
-    if (formMode === "create") rememberForm({ kind: "create" });
-    else if (formMode === "edit" && formConnectionId) {
-      rememberForm({ kind: "edit", connectionId: formConnectionId });
-    } else rememberForm(null);
-  }, [formMode, formConnectionId]);
+    rememberForm(form);
+  }, [form]);
 
   useEffect(() => {
     if (!snapshot) return;
@@ -156,13 +148,12 @@ function Manager(props: PluginScreenProps) {
   }, [snapshot, modelConnectionId]);
 
   useEffect(() => {
-    if (!snapshot || formMode !== "edit" || !formConnectionId) return;
-    if (!connectionById(snapshot, formConnectionId)) {
-      setFormMode("closed");
-      setFormConnectionId(null);
+    if (!snapshot || form?.kind !== "edit") return;
+    if (!connectionById(snapshot, form.connectionId)) {
+      setForm(null);
       rememberForm(null);
     }
-  }, [snapshot, formMode, formConnectionId]);
+  }, [snapshot, form]);
 
   const modelConnection = snapshot ? connectionById(snapshot, modelConnectionId ?? "") : undefined;
   const modelBinding =
@@ -176,8 +167,7 @@ function Manager(props: PluginScreenProps) {
   };
 
   const closeForm = () => {
-    setFormMode("closed");
-    setFormConnectionId(null);
+    setForm(null);
     rememberForm(null);
   };
 
@@ -201,18 +191,47 @@ function Manager(props: PluginScreenProps) {
     rememberView(next);
   };
 
-  const openCreate = () => {
+  // `origin` is set only when an agent's page opens the form; the top bar and
+  // the library never imply a "current agent".
+  const openCreate = (origin?: AgentId, preset?: FormPreset) => {
     closeModels();
-    setFormMode("create");
-    setFormConnectionId(null);
-    rememberForm({ kind: "create" });
+    const next: ScreenForm = { kind: "create", origin, preset };
+    setForm(next);
+    rememberForm(next);
   };
 
-  const openEdit = (connection: Connection) => {
+  const openEdit = (connection: Connection, origin?: AgentId, preset?: FormPreset) => {
     closeModels();
-    setFormMode("edit");
-    setFormConnectionId(connection.id);
-    rememberForm({ kind: "edit", connectionId: connection.id });
+    const next: ScreenForm = { kind: "edit", connectionId: connection.id, origin, preset };
+    setForm(next);
+    rememberForm(next);
+  };
+
+  const copyPreset = (connection: Connection, protocol?: Protocol): FormPreset => ({
+    protocol,
+    name: protocol ? `${connection.name} (${protocolLabel(protocol)})` : `${connection.name} 副本`,
+    url: connection.url,
+    catalogProvider: connection.catalogProvider,
+    copyFrom: connection.id,
+  });
+
+  // After a form opened from an agent page saves, continue straight to choosing
+  // that agent's models on the connection — but only if that agent can use the
+  // saved protocol; otherwise the sheet would offer models it cannot save.
+  const afterSave = (
+    origin: AgentId | undefined,
+    connectionId: string | undefined,
+    protocol: Protocol,
+  ) => {
+    if (!origin || !connectionId) return;
+    const agent = snapshot?.agents.find((item) => item.id === origin);
+    if (!agent?.protocols.includes(protocol)) return;
+    setAgentId(origin);
+    rememberAgent(origin);
+    setView("agents");
+    rememberView("agents");
+    setModelConnectionId(connectionId);
+    rememberModelConnection(connectionId);
   };
 
   const refreshConnection = (connection: Connection) => {
@@ -239,7 +258,7 @@ function Manager(props: PluginScreenProps) {
     if (!ok) return;
     setDeleteTarget(null);
     if (modelConnectionId === target.id) closeModels();
-    if (formConnectionId === target.id) closeForm();
+    if (form?.kind === "edit" && form.connectionId === target.id) closeForm();
   };
 
   const saveDefaults = async (values: { context?: number; output?: number }) => {
@@ -259,8 +278,8 @@ function Manager(props: PluginScreenProps) {
         <ConnectionLibrary
           snapshot={snapshot}
           busy={busy}
-          onNew={openCreate}
-          onEdit={openEdit}
+          onNew={() => openCreate()}
+          onEdit={(connection) => openEdit(connection)}
           onDelete={setDeleteTarget}
           onRefresh={refreshConnection}
           onTest={testConnection}
@@ -273,8 +292,13 @@ function Manager(props: PluginScreenProps) {
         descriptor={descriptor}
         busy={busy}
         onManageModels={openModels}
-        onEditConnection={openEdit}
-        onCreateConnection={openCreate}
+        onEditConnection={(connection) => openEdit(connection)}
+        onCreateConnection={() => openCreate(descriptor.id)}
+        onAdaptConnection={(connection, mode, protocol) =>
+          mode === "switch"
+            ? openEdit(connection, descriptor.id, { protocol })
+            : openCreate(descriptor.id, copyPreset(connection, protocol))
+        }
         onDeleteConnection={setDeleteTarget}
         onRefreshConnection={refreshConnection}
         onTestConnection={testConnection}
@@ -333,7 +357,7 @@ function Manager(props: PluginScreenProps) {
               variant="primary"
               icon="Plus"
               size={compact ? "sm" : "md"}
-              onPress={openCreate}
+              onPress={() => openCreate()}
               disabled={!snapshot}
               testID="ppm-new-connection"
             />
@@ -452,7 +476,7 @@ function Manager(props: PluginScreenProps) {
           defaults={snapshot.defaults[descriptor.id]}
           busy={busy}
           onClose={closeModels}
-          onEditConnection={openEdit}
+          onEditConnection={(connection) => openEdit(connection)}
           run={manager.run}
           reload={manager.reload}
         />
@@ -461,8 +485,14 @@ function Manager(props: PluginScreenProps) {
       <ConnectionForm
         open={formActive && Boolean(snapshot)}
         connection={formConnection}
-        agent={descriptor && descriptor.protocols.length > 0 ? descriptor : undefined}
+        agents={snapshot?.agents ?? []}
+        bindings={snapshot?.bindings ?? []}
+        connections={snapshot?.connections ?? []}
+        origin={formOrigin && formOrigin.protocols.length > 0 ? formOrigin : undefined}
+        preset={form?.preset}
         onClose={closeForm}
+        onSaved={(connectionId, protocol) => afterSave(form?.origin, connectionId, protocol)}
+        onCopy={(connection) => openCreate(form?.origin, copyPreset(connection))}
         run={manager.run}
         busy={busy === "saveConnection"}
       />

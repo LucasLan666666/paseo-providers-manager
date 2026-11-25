@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, readdir, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { Binding } from "../shared/contracts";
 import { buildProvider } from "./adapters";
-import { GATEWAY_KEY_ENV } from "./adapter-common";
+import { GATEWAY_KEY_ENV, openAiBase } from "./adapter-common";
 import { fxProvider } from "./fx";
 import { agents } from "./agents";
 import { findConnection, resolvedModels, type State } from "./state";
@@ -16,8 +16,21 @@ const GENERATION_GRACE_MS = 7 * 24 * 60 * 60 * 1000;
 export const aliasFor = (binding: Pick<Binding, "agent" | "connection">) =>
   `ppm-${binding.agent}-${binding.connection}`;
 
+const hashOf = (value: unknown) =>
+  createHash("sha256").update(JSON.stringify(value)).digest("hex");
+
+/**
+ * `fingerprint` covers everything a generated config depends on, including the
+ * base URL the adapters actually write (a host-root OpenAI URL becomes
+ * `{host}/v1`). It is stored in the provider env as PPM_FINGERPRINT.
+ * `legacy` is the fingerprint older versions computed from the stored URL; it is
+ * only used for providers generated before PPM_FINGERPRINT existed.
+ */
 function plan(state: State) {
-  const aliases = new Map<string, { binding: Binding; fingerprint: string }>();
+  const aliases = new Map<
+    string,
+    { binding: Binding; fingerprint: string; legacy: string }
+  >();
   for (const binding of state.bindings) {
     if (!binding.selected.length) continue;
     const conn = findConnection(state, binding.connection);
@@ -27,12 +40,15 @@ function plan(state: State) {
         `${agent.label} 无法使用此网关协议，请先取消该连接上的模型选择。`,
       );
     const models = resolvedModels(state, binding);
-    const hash = createHash("sha256")
-      .update(
-        JSON.stringify([conn.name, conn.url, conn.protocol, conn.key, models]),
-      )
-      .digest("hex");
-    aliases.set(aliasFor(binding), { binding, fingerprint: hash });
+    const base =
+      conn.protocol === "chat" || conn.protocol === "responses"
+        ? openAiBase(conn.url)
+        : conn.url;
+    aliases.set(aliasFor(binding), {
+      binding,
+      fingerprint: hashOf([conn.name, base, conn.protocol, conn.key, models]),
+      legacy: hashOf([conn.name, conn.url, conn.protocol, conn.key, models]),
+    });
   }
   return aliases;
 }
@@ -75,10 +91,15 @@ export async function preparePatch(
       broken.add(id);
     }
   }
-  const changed = [...wanted].filter(
-    ([id, value]) =>
-      broken.has(id) || previous.get(id)?.fingerprint !== value.fingerprint,
-  );
+  // Compare against what is deployed, not against a fingerprint recomputed from
+  // the committed state: a recomputation uses today's generator on both sides
+  // and can never notice that a config was written by an older generator.
+  const changed = [...wanted].filter(([id, value]) => {
+    if (broken.has(id)) return true;
+    const env = config.providers[id]?.env as Record<string, string> | undefined;
+    const deployed = env?.PPM_FINGERPRINT || previous.get(id)?.legacy;
+    return deployed !== value.fingerprint;
+  });
   if (!removeProviders.size && !changed.length) return null;
   for (const alias of [
     ...removeProviders,
@@ -116,6 +137,7 @@ export async function preparePatch(
           [GATEWAY_KEY_ENV]: settings.env[GATEWAY_KEY_ENV] ?? "",
           PPM_OWNER: next.owner,
           PPM_GENERATION: dir,
+          PPM_FINGERPRINT: wanted.get(id)!.fingerprint,
         },
       };
     }

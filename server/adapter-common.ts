@@ -1,6 +1,7 @@
 import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import type { AgentId, Protocol } from "../shared/contracts";
+import { protocolInfo } from "../shared/protocols";
 
 /** The fields the manager asks an adapter to turn into a native provider. */
 export interface AdapterModel {
@@ -62,7 +63,9 @@ export function assertProtocol(
 ): void {
   if (!supported.includes(protocol)) {
     throw new Error(
-      `${agent} 不支持 ${protocol} 协议；可用协议：${supported.join("、")}。`,
+      `${agent} 不支持 ${protocolInfo[protocol].label} 协议；可用协议：${supported
+        .map((item) => protocolInfo[item].label)
+        .join("、")}。`,
     );
   }
 }
@@ -84,9 +87,17 @@ export function endpoint(raw: string): string {
   return url.href.replace(/\/+$/, "");
 }
 
-/** OpenAI-compatible bases already include their version, e.g. https://host/v1. */
+/**
+ * OpenAI-compatible bases normally include their version, e.g. https://host/v1.
+ * A bare host root means /v1: model discovery already lists `{host}/v1/models`
+ * for it (catalog.ts) and Paseo's own Codex provider appends /v1 the same way.
+ * Without this the catalog looked healthy while every generated CLI called
+ * `{host}/responses` or `{host}/chat/completions` and failed.
+ */
 export function openAiBase(raw: string): string {
-  return endpoint(raw);
+  const url = new URL(endpoint(raw));
+  if (url.pathname === "/" || url.pathname === "") url.pathname = "/v1";
+  return url.href.replace(/\/+$/, "");
 }
 
 /** Anthropic SDKs add /v1 themselves, so accept either host root or a /v1 base. */

@@ -1,6 +1,7 @@
 import { Icon } from "@getpaseo/plugin/client/ui";
 import { Text, View } from "react-native";
-import type { Binding, Connection, Limits, Model, Snapshot } from "../shared/contracts";
+import type { Binding, Connection, Limits, Model, Protocol, Snapshot } from "../shared/contracts";
+import { counterpartProtocol } from "../shared/protocols";
 import {
   conflictsFor,
   isStaleConnection,
@@ -14,6 +15,8 @@ import {
 import {
   formatRelativeTime,
   formatTokens,
+  protocolDescription,
+  protocolFullLabel,
   protocolLabel,
   refreshLabel,
 } from "./format";
@@ -403,6 +406,7 @@ export function CompatiblePicker({
   busy,
   onPick,
   onCreate,
+  onAdapt,
   testID,
 }: {
   snapshot: Snapshot;
@@ -410,6 +414,7 @@ export function CompatiblePicker({
   busy: boolean;
   onPick: (connection: Connection) => void;
   onCreate: () => void;
+  onAdapt: (connection: Connection, mode: "switch" | "copy", protocol: Protocol) => void;
   testID?: string;
 }) {
   const { theme, compact } = useLayout();
@@ -446,18 +451,95 @@ export function CompatiblePicker({
             gap: 5,
           }}
         >
-          <Text style={t.bodyStrong}>没有可添加的连接</Text>
+          <Text style={t.bodyStrong}>没有可直接添加的连接</Text>
           <Text style={[t.tiny, { textAlign: "center" }]}>
-            可以新建一个连接，或先在连接库中修复协议不兼容的连接。
+            {agent.label} 需要 {agent.protocols.map(protocolFullLabel).join(" / ")}。可以新建一个连接
+            {incompatible.length ? "，或处理下方协议不兼容的连接" : ""}。
           </Text>
         </View>
       )}
       {incompatible.length ? (
-        <Text style={t.tiny}>
-          另有 {incompatible.length} 个连接协议不兼容，未在此列出。
-        </Text>
+        <View style={{ gap: 6 }}>
+          <Text style={t.small}>协议不兼容</Text>
+          {incompatible.map((connection) => (
+            <IncompatibleConnectionRow
+              key={connection.id}
+              snapshot={snapshot}
+              connection={connection}
+              agent={agent}
+              disabled={busy}
+              onAdapt={onAdapt}
+            />
+          ))}
+        </View>
       ) : null}
       <Btn label="新建连接" icon="Plus" onPress={onCreate} disabled={busy} fullWidth />
+    </View>
+  );
+}
+
+function IncompatibleConnectionRow({
+  snapshot,
+  connection,
+  agent,
+  disabled,
+  onAdapt,
+}: {
+  snapshot: Snapshot;
+  connection: Connection;
+  agent: AgentDescriptor;
+  disabled: boolean;
+  onAdapt: (connection: Connection, mode: "switch" | "copy", protocol: Protocol) => void;
+}) {
+  const { theme, compact } = useLayout();
+  const t = useTokens(theme, compact);
+  // Only the OpenAI pair is offered as a fix: the same base URL usually serves
+  // both. Anthropic or Gemini connections have different URLs and model lists.
+  const counterpart = counterpartProtocol(connection.protocol);
+  const target = counterpart && agent.protocols.includes(counterpart) ? counterpart : undefined;
+  const inUse = snapshot.bindings.some(
+    (binding) => binding.connection === connection.id && binding.selected.length > 0,
+  );
+  return (
+    <View
+      testID={`ppm-incompatible-${connection.id}`}
+      style={{
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 9,
+        borderRadius: 10,
+        borderWidth: 1,
+        borderStyle: "dashed",
+        borderColor: theme.colors.border,
+        padding: 10,
+      }}
+    >
+      <View style={{ flex: 1, minWidth: 0, gap: 2, opacity: 0.75 }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+          <Text style={t.bodyStrong} numberOfLines={1}>
+            {connection.name}
+          </Text>
+          <Badge label={protocolLabel(connection.protocol)} />
+        </View>
+        <Text style={t.tiny}>
+          {agent.label} 需要 {agent.protocols.map(protocolLabel).join(" / ")}
+          {target
+            ? inUse
+              ? `。此连接正被其他 Agent 使用；若网关也提供 ${protocolDescription(target)}，可复制一份`
+              : `。若网关也提供 ${protocolDescription(target)}，可直接改用`
+            : "。"}
+        </Text>
+      </View>
+      {target ? (
+        <Btn
+          label={inUse ? `复制为 ${protocolLabel(target)}` : `改为 ${protocolLabel(target)}`}
+          size="sm"
+          variant="secondary"
+          onPress={() => onAdapt(connection, inUse ? "copy" : "switch", target)}
+          disabled={disabled}
+          testID={`ppm-adapt-${connection.id}`}
+        />
+      ) : null}
     </View>
   );
 }

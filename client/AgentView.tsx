@@ -1,7 +1,7 @@
 import { Icon } from "@getpaseo/plugin/client/ui";
 import { useState } from "react";
 import { Text, View } from "react-native";
-import type { Binding, Connection, Snapshot } from "../shared/contracts";
+import type { Binding, Connection, Protocol, Snapshot } from "../shared/contracts";
 import { AgentHeading } from "./AgentRail";
 import {
   agentSummary,
@@ -36,6 +36,7 @@ export function AgentView({
   onManageModels,
   onEditConnection,
   onCreateConnection,
+  onAdaptConnection,
   onDeleteConnection,
   onRefreshConnection,
   onTestConnection,
@@ -48,6 +49,8 @@ export function AgentView({
   onManageModels: (connection: Connection) => void;
   onEditConnection: (connection: Connection) => void;
   onCreateConnection: () => void;
+  /** Switch an unused OpenAI connection to the other OpenAI protocol, or copy it. */
+  onAdaptConnection: (connection: Connection, mode: "switch" | "copy", protocol: Protocol) => void;
   onDeleteConnection: (connection: Connection) => void;
   onRefreshConnection: (connection: Connection) => void;
   onTestConnection: (connection: Connection) => void;
@@ -257,7 +260,7 @@ export function AgentView({
         >
           <Icon name="Info" size={14} color={theme.colors.accent} />
           <Text style={[t.tiny, { flex: 1 }]}>
-            只会列出协议兼容且尚未绑定的连接。选择连接后即可挑选模型与手动限额；密钥和目录仍然全局复用。
+            协议兼容且尚未添加的连接可以直接选择；协议不兼容的连接会灰显并说明原因。选择连接后即可挑选模型与手动限额；密钥和目录仍然全局复用。
           </Text>
         </View>
         <CompatiblePicker
@@ -268,6 +271,10 @@ export function AgentView({
           onCreate={() => {
             setAddOpen(false);
             onCreateConnection();
+          }}
+          onAdapt={(connection, mode, protocol) => {
+            setAddOpen(false);
+            onAdaptConnection(connection, mode, protocol);
           }}
         />
       </Sheet>

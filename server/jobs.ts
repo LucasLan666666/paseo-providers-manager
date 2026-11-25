@@ -1,12 +1,13 @@
 import { randomUUID } from "node:crypto";
+import type { Operation } from "../shared/contracts";
 
-type Report = { message: string; job?: string };
-type Result = { value: { message: string } } | { error: string };
+type Outcome = Omit<Operation, "job">;
+type Result = { value: Outcome } | { error: string };
 
 // Model discovery and a real agent turn can outlast Paseo's single RPC deadline.
 export class Jobs {
   private jobs = new Map<string, { outcome: Promise<Result>; until: number }>();
-  start(work: Promise<{ message: string }>): Promise<Report> {
+  start(work: Promise<Outcome>): Promise<Operation> {
     const now = Date.now();
     for (const [id, job] of this.jobs)
       if (job.until < now) this.jobs.delete(id);
@@ -24,7 +25,7 @@ export class Jobs {
     });
     return this.wait(id);
   }
-  async wait(id: string): Promise<Report> {
+  async wait(id: string): Promise<Operation> {
     const job = this.jobs.get(id);
     if (!job) throw new Error("操作已结束或插件已重载，请刷新管理页。");
     let timer: ReturnType<typeof setTimeout> | undefined;

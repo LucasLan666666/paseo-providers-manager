@@ -79,6 +79,8 @@ const action = z.discriminatedUnion("type", [
     protocol,
     catalogProvider: z.string().trim(),
     key: z.string().optional(),
+    /** Reuse the saved key of another connection on the same origin (copy flow). */
+    copyKeyFrom: connection.optional(),
   }),
   z.object({ type: z.literal("deleteConnection"), connection }),
   z.object({ type: z.literal("refresh"), connection }),
@@ -122,7 +124,15 @@ export const snapshotRpc = defineRpc({
   input: z.object({}),
   output: snapshot,
 });
-const operation = z.object({ message: z.string(), job: z.string().optional() });
+const operation = z.object({
+  message: z.string(),
+  job: z.string().optional(),
+  /** Toast severity; absent means success. */
+  level: z.enum(["success", "info", "warning"]).optional(),
+  /** The connection a saveConnection action created or updated. */
+  connection: z.uuid().optional(),
+});
+export type Operation = z.infer<typeof operation>;
 export const jobRpc = defineRpc({
   name: "manager.wait",
   input: z.object({ job: z.uuid() }),

@@ -4,6 +4,8 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildProvider } from "../server/adapters";
+import { fxProvider } from "../server/fx";
+import type { SavedConnection } from "../server/state";
 import {
   anthropicBase,
   antigravityPickerId,
@@ -11,6 +13,7 @@ import {
   endpoint,
   geminiBase,
   modelChoices,
+  openAiBase,
   pickerModelId,
   requireLimits,
   type AdapterConnection,
@@ -36,6 +39,45 @@ test("normalizes native gateway bases without inventing a version", () => {
   assert.throws(() => endpoint("ftp://gateway.test"), /HTTP/);
   assert.throws(() => endpoint("https://user:pass@gateway.test"), /用户名|密码/);
   assert.throws(() => endpoint("https://gateway.test/v1?key=secret"), /查询参数/);
+});
+
+test("OpenAI bases without a path use /v1, like model discovery", async () => {
+  assert.equal(openAiBase("https://gateway.test"), "https://gateway.test/v1");
+  assert.equal(openAiBase("https://gateway.test/"), "https://gateway.test/v1");
+  assert.equal(openAiBase("https://gateway.test/v1/"), "https://gateway.test/v1");
+  assert.equal(openAiBase("https://gateway.test/api/openai"), "https://gateway.test/api/openai");
+  const root = await mkdtemp(join(tmpdir(), "ppm-adapters-"));
+  try {
+    const codex = await buildProvider(
+      "codex",
+      { ...connection("responses"), url: "https://gateway.test" },
+      models,
+      join(root, "codex"),
+    );
+    const toml = await readFile(join(codex.env.CODEX_HOME, "config.toml"), "utf8");
+    assert.match(toml, /base_url = "https:\/\/gateway\.test\/v1"/);
+    const saved = (protocol: AdapterConnection["protocol"]): SavedConnection => ({
+      ...connection(protocol),
+      url: "https://gateway.test",
+      catalogProvider: "",
+      hasKey: true,
+      lastRefresh: null,
+      error: null,
+      models: [],
+    });
+    await fxProvider(saved("chat"), models, root);
+    const fx = JSON.parse(await readFile(join(root, "settings.json"), "utf8"));
+    assert.equal(fx.providers.managed.base_url, "https://gateway.test/v1");
+    await fxProvider(saved("anthropic"), models, root);
+    const fxAnthropic = JSON.parse(await readFile(join(root, "settings.json"), "utf8"));
+    assert.equal(fxAnthropic.providers.managed.base_url, "https://gateway.test");
+    await assert.rejects(
+      buildProvider("codex", connection("chat"), models, join(root, "codex-chat")),
+      /OpenAI Chat Completions 协议；可用协议：OpenAI Responses/,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("maps Antigravity gateway ids onto the agy ACP built-ins", () => {
