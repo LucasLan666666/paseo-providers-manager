@@ -1,0 +1,7 @@
+{
+  "id": "paseo-providers-manager",
+  "name": "Providers Manager",
+  "requirements": {
+    "paseo": ">=0.17.4"
+  }
+}
