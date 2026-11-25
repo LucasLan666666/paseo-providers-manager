@@ -40,18 +40,6 @@ function originOf(raw: string): string | undefined {
   }
 }
 
-/** OpenAI bases without a path are used as `{host}/v1` (server openAiBase). */
-function impliedV1(raw: string, protocol: Protocol | null): string | undefined {
-  if (protocol !== "chat" && protocol !== "responses") return undefined;
-  try {
-    const url = new URL(raw.trim());
-    if (url.pathname !== "/" && url.pathname !== "") return undefined;
-    return `${url.origin}/v1`;
-  } catch {
-    return undefined;
-  }
-}
-
 export function ConnectionForm({
   open,
   connection,
@@ -140,7 +128,6 @@ export function ConnectionForm({
     : [];
   const droppedOverrides = dropped.some((binding) => Object.keys(binding.overrides).length > 0);
   const originMismatch = origin && protocol !== null && !origin.protocols.includes(protocol);
-  const v1 = impliedV1(url, protocol);
   const copyOriginChanged =
     copySource !== undefined && originOf(url) !== undefined && originOf(url) !== originOf(copySource.url);
 
@@ -258,7 +245,6 @@ export function ConnectionForm({
             setErrors((current) => ({ ...current, url: undefined, key: undefined }));
         }}
         placeholder="https://gateway.example.com/v1"
-        hint={v1 ? `未填写路径，将按 ${v1} 访问` : undefined}
         error={errors.url}
         keyboardType="url"
         editable={!saving}

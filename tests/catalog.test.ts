@@ -113,7 +113,7 @@ test("supports responses protocol on a bare localhost URL without a key", async 
 
   assert.equal(mock.calls.length, 1);
   const call = mock.calls[0];
-  assert.equal(call.url.href, "http://localhost:11434/v1/models");
+  assert.equal(call.url.href, "http://localhost:11434/models");
   assert.equal(call.headers.get("authorization"), null);
   assert.equal(call.headers.get("x-api-key"), null);
   assert.deepEqual(models, [{ id: "local-model", label: "local-model", listed: true }]);

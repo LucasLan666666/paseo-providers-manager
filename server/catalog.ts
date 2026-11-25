@@ -264,7 +264,8 @@ function initialModelsUrl(base: URL, protocol: Protocol): URL {
           ? `${path}/models`
           : `${path}/v1beta/models`;
     } else {
-      url.pathname = path === "" ? "/v1/models" : `${path}/models`;
+      // OpenAI bases are used as entered, exactly like the generated CLI configs.
+      url.pathname = `${path}/models`;
     }
   } else {
     url.pathname = path;

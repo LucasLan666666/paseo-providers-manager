@@ -88,16 +88,12 @@ export function endpoint(raw: string): string {
 }
 
 /**
- * OpenAI-compatible bases normally include their version, e.g. https://host/v1.
- * A bare host root means /v1: model discovery already lists `{host}/v1/models`
- * for it (catalog.ts) and Paseo's own Codex provider appends /v1 the same way.
- * Without this the catalog looked healthy while every generated CLI called
- * `{host}/responses` or `{host}/chat/completions` and failed.
+ * OpenAI-compatible bases are used exactly as entered: the CLI appends
+ * /chat/completions or /responses. Whether a gateway needs /v1 is the user's
+ * call (some relays serve both); discovery uses the same base (catalog.ts).
  */
 export function openAiBase(raw: string): string {
-  const url = new URL(endpoint(raw));
-  if (url.pathname === "/" || url.pathname === "") url.pathname = "/v1";
-  return url.href.replace(/\/+$/, "");
+  return endpoint(raw);
 }
 
 /** Anthropic SDKs add /v1 themselves, so accept either host root or a /v1 base. */
