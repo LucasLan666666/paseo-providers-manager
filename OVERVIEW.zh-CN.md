@@ -5,9 +5,9 @@
 需要 Paseo 0.17.4 或更新的兼容版本，并在 daemon 所在主机安装相应 CLI。管理页会显示每个 Agent 的接入方式：
 
 - **Claude Code**：Anthropic Messages 网关。只有 Claude Code 不认识的模型，或手动填写的值，才会写入上限。
-- **Codex**：OpenAI Responses 网关。Codex 自带模型表里的模型使用它自己的上限；不认识的同系列模型或手动值写入生成的模型目录。
+- **Codex**：OpenAI Responses 网关。精确匹配 Codex 内置表的模型保留其上限和推理强度档位；按连接配置的别名映射、允许档位和手动值写入生成的模型目录。
 - **GitHub Copilot**：Chat Completions、Responses 或 Anthropic Messages 网关，通过 Copilot CLI 的 providers 配置。
-- **OpenCode**：Chat Completions、Responses 或 Anthropic Messages 网关，逐模型写入上下文窗口、最大输出和能力。
+- **OpenCode**：Chat Completions、Responses 或 Anthropic Messages 网关，逐模型上限、能力与密钥写入私有文件，并在打开会话时按连接注入以隔离多个网关。
 - **Pi / Oh My Pi**：Chat Completions、Responses 或 Anthropic Messages 网关，逐模型写入上下文窗口、最大输出和能力。
 - **Antigravity**：Gemini 兼容网关 + 原生 agy ACP 会话。agy ACP 的模型选择器只接受它内置的模型名（例如 `gemini-4-argon`、`gemini-3.1-pro`，可带 `-low/-medium/-high/-xhigh`）；插件会把网关模型映射到这些名称。
 - **fx**：Chat Completions、Responses 或 Anthropic Messages 网关，写入 fx 的 `settings.json`。

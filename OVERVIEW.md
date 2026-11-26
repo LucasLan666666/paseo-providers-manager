@@ -5,9 +5,9 @@ Open Providers Manager from the Paseo sidebar: pick an agent, add or reuse a gat
 Requires Paseo 0.17.4 or a later compatible version, with each agent's CLI installed on the daemon host. The manager shows how each agent connects:
 
 - **Claude Code**: Anthropic Messages gateway. Limits are written only for models Claude Code doesn't know, or for manual values.
-- **Codex**: OpenAI Responses gateway. Models in Codex's built-in table keep its own limits; unknown models of a known family, and manual values, go into a generated model catalog.
+- **Codex**: OpenAI Responses gateway. Models in Codex's built-in table keep its limits and reasoning effort options; per-connection alias mapping, effort allowlists, and manual overrides go into a generated model catalog.
 - **GitHub Copilot**: Chat Completions, Responses or Anthropic Messages gateway, through the Copilot CLI's providers file.
-- **OpenCode**: Chat Completions, Responses or Anthropic Messages gateway, with per-model context window, max output and capabilities.
+- **OpenCode**: Chat Completions, Responses or Anthropic Messages gateway, with per-model context window, max output and capabilities stored in private files and injected when opening a session so multiple gateways stay isolated.
 - **Pi / Oh My Pi**: Chat Completions, Responses or Anthropic Messages gateway, with per-model context window, max output and capabilities.
 - **Antigravity**: Gemini-compatible gateway plus native agy ACP sessions. agy's ACP model picker only accepts its built-in names (for example `gemini-4-argon` or `gemini-3.1-pro`, optionally with `-low/-medium/-high/-xhigh`); gateway models are mapped onto them.
 - **fx**: Chat Completions, Responses or Anthropic Messages gateway, written to fx's `settings.json`.
