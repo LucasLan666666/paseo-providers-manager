@@ -22,6 +22,13 @@ const hashOf = (value: unknown) =>
   createHash("sha256").update(JSON.stringify(value)).digest("hex");
 
 /**
+ * Bumped when an adapter's output changes in a way existing providers must pick
+ * up even though their inputs did not change. Only listed agents regenerate.
+ * claude 2: CLAUDE_CONFIG_DIR is no longer set (sessions use the real ~/.claude).
+ */
+const GENERATOR_VERSIONS: Partial<Record<Binding["agent"], number>> = { claude: 2 };
+
+/**
  * `fingerprint` covers everything a generated config depends on. It is stored
  * in the provider env as PPM_FINGERPRINT, so a later generator change can be
  * detected against what is actually deployed.
@@ -44,6 +51,8 @@ function plan(state: State, options: { lenient?: boolean; codexSalt?: string } =
       // The generated Codex catalog starts from the installed Codex's built-in
       // one; a Codex upgrade must regenerate it.
       const salt = binding.agent === "codex" && options.codexSalt ? [options.codexSalt] : [];
+      const version = GENERATOR_VERSIONS[binding.agent];
+      if (version) salt.push(`generator-${version}`);
       aliases.set(aliasFor(binding), {
         binding,
         fingerprint: hashOf([conn.name, conn.url, conn.protocol, conn.key, models, ...salt]),

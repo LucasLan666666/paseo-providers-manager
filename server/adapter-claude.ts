@@ -2,8 +2,6 @@ import {
   anthropicBase,
   assertModels,
   assertProtocol,
-  childDir,
-  ensurePrivateDir,
   modelChoices,
   type AdapterConnection,
   type AdapterModel,
@@ -16,18 +14,20 @@ export const claudeKnowsModel = (id: string) => /^claude-/i.test(id);
 const minimum = (values: number[]) => (values.length ? String(Math.min(...values)) : "");
 
 /**
- * Claude Code is an Anthropic Messages client. Paseo passes the environment to
- * the Claude Agent SDK, so a private CLAUDE_CONFIG_DIR keeps sessions, settings
- * and legacy ~/.claude.json state out of the user's real Claude install.
+ * Claude Code is an Anthropic Messages client. The gateway is selected only
+ * through environment variables, exactly like Paseo's built-in Claude provider:
+ * CLAUDE_CONFIG_DIR is left alone, so sessions use the user's real ~/.claude
+ * (skills, plugins, session history, project memory) and ~/.claude.json.
+ * Earlier versions pointed it at a private per-generation directory, which hid
+ * all of that and lost history whenever the configuration changed.
  */
 export async function claudeProvider(
   connection: AdapterConnection,
   models: readonly AdapterModel[],
-  dir: string,
+  _dir: string,
 ): Promise<BuiltProvider> {
   assertProtocol("Claude Code", connection.protocol, ["anthropic"]);
   assertModels(models);
-  const configDir = await ensurePrivateDir(childDir(dir, "claude"));
   const first = models[0].id;
   // Claude Code reads one value per process, not per model, so the smallest
   // relevant value is used. CLAUDE_CODE_MAX_CONTEXT_TOKENS only applies to
@@ -47,7 +47,6 @@ export async function claudeProvider(
     // Third-party Anthropic-compatible gateways rarely implement server-side WebSearch.
     disallowedTools: ["WebSearch"],
     env: {
-      CLAUDE_CONFIG_DIR: configDir,
       ANTHROPIC_BASE_URL: anthropicBase(connection.url),
       // Claude Code needs a credential even for a local unauthenticated gateway.
       ANTHROPIC_AUTH_TOKEN: connection.key || "ppm-no-key",

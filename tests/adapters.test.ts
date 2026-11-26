@@ -243,6 +243,7 @@ test("Claude Code only receives limits for models it doesn't know or manual outp
   try {
     const anthropic = { ...connection("anthropic"), url: "https://gateway.test" };
     const known = await buildProvider("claude", anthropic, [{ id: "claude-opus-5-5", label: "Opus", context: 1000000, output: 128000, outputSource: "catalog" }], join(root, "a"));
+    assert.equal("CLAUDE_CONFIG_DIR" in known.env, false, "sessions use the real ~/.claude");
     assert.equal(known.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS, "");
     assert.equal(known.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS, "");
     const mixed = await buildProvider(
