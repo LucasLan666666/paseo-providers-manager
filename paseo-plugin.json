@@ -1,6 +1,21 @@
 {
   "id": "paseo-providers-manager",
   "name": "Providers Manager",
+  "description": "Manage shared AI gateway connections, model limits, and per-agent model pickers across Paseo coding agents.",
+  "icon": "assets/icon.png",
+  "media": [
+    "assets/screenshots/agents.png",
+    "assets/screenshots/connections.png",
+    "assets/screenshots/models.png",
+    "assets/screenshots/form.png",
+    "assets/screenshots/picker.png",
+    "assets/demo.gif"
+  ],
+  "translations": {
+    "zh-CN": {
+      "description": "集中管理 Paseo 各类编码 Agent 的共享 AI 网关连接、模型参数与新建会话模型选择器。"
+    }
+  },
   "requirements": {
     "paseo": ">=0.17.4"
   }
