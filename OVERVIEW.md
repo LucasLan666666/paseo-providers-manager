@@ -13,7 +13,7 @@ Requires Paseo 0.17.4 or a later compatible version, with each agent's CLI insta
 - **fx**: Chat Completions, Responses or Anthropic Messages gateway, written to fx's `settings.json`.
 - **Muse Code / Hoplite**: no verifiable custom inference gateway; only their own account model lists can be checked and used.
 
-Gateway URLs are used exactly as entered; the plugin never adds `/v1` for you.
+OpenAI-compatible gateway URLs are used exactly as entered; the plugin never adds `/v1` to them. Anthropic and Gemini gateways accept either the host root or a versioned base, and their own API path (`/v1/messages`, `/v1beta/models`) is added as their clients expect.
 
 ## Context window and max output
 

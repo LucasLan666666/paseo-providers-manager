@@ -13,7 +13,7 @@
 - **fx**：Chat Completions、Responses 或 Anthropic Messages 网关，写入 fx 的 `settings.json`。
 - **Muse Code / Hoplite**：没有可验证的自定义推理网关接口，只能检查并使用各自账号的模型目录。
 
-网关地址按填写的原样使用，插件不会自动补 `/v1`。
+OpenAI 兼容网关的地址按填写的原样使用，插件不会自动补 `/v1`。Anthropic 和 Gemini 网关可以填主机根地址，也可以带版本路径，它们的 API 路径（`/v1/messages`、`/v1beta/models`）按各自客户端的约定补全。
 
 ## 上下文窗口与最大输出
 

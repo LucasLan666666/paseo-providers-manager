@@ -960,7 +960,7 @@ export function ModelSheet({
           </Text>
           <View style={{ flexDirection: compact ? "column" : "row", gap: 8 }}>
             {(["context", "output"] as const).map((field) => (
-              <View key={field} style={{ flex: 1 }}>
+              <View key={field} style={compact ? undefined : { flex: 1, minWidth: 0 }}>
                 <TextField
                   label={field === "context" ? tr("上下文窗口", "Context window") : tr("最大输出", "Max output")}
                   value={fallbackText[field]}

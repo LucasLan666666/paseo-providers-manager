@@ -628,7 +628,10 @@ export function Field({
   const { theme, compact } = useLayout();
   const t = useTokens(theme, compact);
   return (
-    <View style={{ gap: 5, flex: 1, minWidth: 0 }}>
+    // No flex here: inside a column (every sheet body) flex-basis 0 lets the
+    // field shrink below its content, and its hint then overlaps the next field.
+    // Rows that want equal columns wrap their fields in a flex: 1 view.
+    <View style={{ gap: 5, minWidth: 0 }}>
       {label ? (
         <Text style={[t.small, { color: theme.colors.foreground, fontWeight: "600" }]}>
           {label}

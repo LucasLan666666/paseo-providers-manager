@@ -151,12 +151,12 @@ function LibraryCard({
   const testing = busy === `testConnection:${connection.id}`;
   const stale = isStaleConnection(connection, now);
   const modelIds = new Set(connection.models.map((model) => model.id));
-  const selectedTotal = snapshot.bindings
-    .filter((binding) => binding.connection === connection.id)
-    .reduce(
-      (count, binding) => count + binding.selected.filter((id) => modelIds.has(id)).length,
-      0,
-    );
+  // Distinct models any agent uses: three agents sharing six models is 6 / 14, not 18 / 14.
+  const selectedTotal = new Set(
+    snapshot.bindings
+      .filter((binding) => binding.connection === connection.id)
+      .flatMap((binding) => binding.selected.filter((id) => modelIds.has(id))),
+  ).size;
 
   return (
     <Card testID={`ppm-library-${connection.id}`} style={{ gap: 10 }}>

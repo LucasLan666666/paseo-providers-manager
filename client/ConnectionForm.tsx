@@ -70,6 +70,8 @@ export function ConnectionForm({
   busy: boolean;
 }) {
   const { theme, compact } = useLayout();
+  // Name and catalog provider share a row on wide screens; equal halves there.
+  const column = compact ? undefined : { flex: 1, minWidth: 0 };
   const { tr, lang } = useTr();
   const t = useTokens(theme, compact);
   const editing = Boolean(connection);
@@ -220,29 +222,33 @@ export function ConnectionForm({
       }
     >
       <View style={{ flexDirection: compact ? "column" : "row", gap: 10 }}>
-        <TextField
-          label={tr("名称", "Name")}
-          required
-          value={name}
-          onChangeText={(value) => {
-            setName(value);
-            if (errors.name) setErrors((current) => ({ ...current, name: undefined }));
-          }}
-          placeholder={tr("例如 OpenRouter 主账号", "e.g. OpenRouter main account")}
-          error={errors.name}
-          editable={!saving}
-          testID="ppm-connection-name"
-          autoFocus={!editing}
-        />
-        <TextField
-          label={tr("目录供应商", "Catalog provider")}
-          value={catalogProvider}
-          onChangeText={setCatalogProvider}
-          placeholder={tr("例如 openrouter", "e.g. openrouter")}
-          hint={tr("用于目录容量与模型元数据；可留空", "Used for model limits and metadata; optional")}
-          editable={!saving}
-          testID="ppm-connection-catalog"
-        />
+        <View style={column}>
+          <TextField
+            label={tr("名称", "Name")}
+            required
+            value={name}
+            onChangeText={(value) => {
+              setName(value);
+              if (errors.name) setErrors((current) => ({ ...current, name: undefined }));
+            }}
+            placeholder={tr("例如 OpenRouter 主账号", "e.g. OpenRouter main account")}
+            error={errors.name}
+            editable={!saving}
+            testID="ppm-connection-name"
+            autoFocus={!editing}
+          />
+        </View>
+        <View style={column}>
+          <TextField
+            label={tr("目录供应商", "Catalog provider")}
+            value={catalogProvider}
+            onChangeText={setCatalogProvider}
+            placeholder={tr("例如 openrouter", "e.g. openrouter")}
+            hint={tr("用于目录容量与模型元数据；可留空", "Used for model limits and metadata; optional")}
+            editable={!saving}
+            testID="ppm-connection-catalog"
+          />
+        </View>
       </View>
 
       <TextField
