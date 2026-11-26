@@ -62,10 +62,10 @@ export async function opencodeProvider(
             {
               name: model.label.trim() || model.id,
               limit: { context: model.context, output: model.output },
-              tool_call: true,
+              tool_call: model.caps?.tools ?? true,
               temperature: true,
-              reasoning: false,
-              attachment: false,
+              reasoning: model.caps?.reasoning ?? false,
+              attachment: model.caps?.image ?? false,
             },
           ]),
         ),

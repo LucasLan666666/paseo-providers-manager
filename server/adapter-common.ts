@@ -9,6 +9,12 @@ export interface AdapterModel {
   label: string;
   context?: number;
   output?: number;
+  /** Where each limit came from; Claude Code / Codex only receive non-built-in ones. */
+  contextSource?: "manual" | "gateway" | "catalog" | "fallback";
+  outputSource?: "manual" | "gateway" | "catalog" | "fallback";
+  caps?: { reasoning: boolean; image: boolean; tools: boolean };
+  /** False for embedding/image/… models; adapters skip them where it matters. */
+  chat?: boolean;
 }
 
 /** The connection fields an adapter needs. SavedConnection is structurally compatible. */

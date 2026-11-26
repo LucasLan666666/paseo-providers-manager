@@ -42,8 +42,8 @@ function piModels(
         models: models.map((model) => ({
           id: model.id,
           name: model.label.trim() || model.id,
-          reasoning: false,
-          input: ["text"],
+          reasoning: model.caps?.reasoning ?? false,
+          input: model.caps?.image ? ["text", "image"] : ["text"],
           cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
           contextWindow: model.context,
           maxTokens: model.output,

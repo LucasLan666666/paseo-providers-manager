@@ -1,16 +1,17 @@
 import type { PaseoApi } from "./types";
 import { randomUUID } from "node:crypto";
-import type { Action, Binding, Operation } from "../shared/contracts";
+import type { Action, Operation, SettingChange } from "../shared/contracts";
+import { limitIssue, resolveModel } from "../shared/limits";
 import { protocolInfo } from "../shared/protocols";
 import { agents } from "./agents";
-import { discover } from "./catalog";
+import { discover, fetchCatalog } from "./catalog";
+import { enrichModels } from "./match";
+import { probeModels } from "./probe";
 import { preparePatch, pruneGenerations } from "./registry";
 import { antigravityPickerId } from "./adapter-common";
 import {
-  effectiveLimits,
   findConnection,
   getBinding,
-  limitProblem,
   mergeCatalog,
   snapshotOf,
   type SavedConnection,
@@ -20,9 +21,23 @@ import { Storage } from "./storage";
 
 const DAY = 24 * 60 * 60 * 1000;
 
-async function refresh(state: State, conn: SavedConnection) {
+const KIND_LABELS: Record<string, string> = {
+  embedding: "嵌入模型",
+  reranking: "重排模型",
+  image: "图像模型",
+  audio: "语音模型",
+  video: "视频模型",
+  other: "非对话模型",
+};
+
+async function refresh(conn: SavedConnection) {
   try {
-    mergeCatalog(state, conn, await discover(conn));
+    const models = await discover(conn);
+    // Name matching across models.dev fills what the gateway and an exact
+    // provider match left open, plus capabilities and the model kind.
+    const catalog = await fetchCatalog();
+    if (catalog) enrichModels(models, catalog, { provider: conn.catalogProvider || undefined });
+    mergeCatalog(conn, models);
   } catch (error) {
     const message = error instanceof Error ? error.message : "目录请求失败";
     conn.error = conn.key
@@ -41,7 +56,6 @@ export function validateConnection(state: State, connection: SavedConnection) {
       model.label && model.label !== model.id
         ? `${model.label} (${model.id})`
         : model.id;
-    if (!model.listed) issues.add(`${name}：网关目录未列出`);
     for (const binding of bound) {
       const descriptor = agents.find((agent) => agent.id === binding.agent);
       if (!descriptor) continue;
@@ -51,46 +65,55 @@ export function validateConnection(state: State, connection: SavedConnection) {
         );
         continue;
       }
+      if (!binding.selected.includes(model.id)) continue;
+      if (!model.listed) issues.add(`${name}：网关目录未列出`);
       if (binding.agent === "antigravity" && antigravityPickerId(model.id) === undefined)
         issues.add(`${name}：无法映射到 agy 内置模型`);
-      if (!binding.selected.includes(model.id)) continue;
-      // Check the limits the generated config really uses (manual value →
-      // gateway/catalog → agent default), not only the catalog values.
-      const limits = effectiveLimits(state, binding, model);
-      const problem = limitProblem(binding.agent, limits);
-      if (problem === "missing")
-        issues.add(
-          `${name}：${descriptor.label} 需要上下文窗口和最大输出（网关和目录没有提供，也没有手动值或 ${descriptor.label} 默认值）`,
-        );
-      if (problem === "order")
-        issues.add(
-          `${name}：${descriptor.label} 的最大输出 ${limits.output} 必须小于上下文窗口 ${limits.context}`,
-        );
+      const resolved = resolveModel(connection, model);
+      if (!resolved.chat)
+        issues.add(`${name}：${KIND_LABELS[model.kind ?? "other"]}，不能用于对话`);
+      const issue = limitIssue(resolved);
+      if (issue)
+        issues.add(`${name}：最大输出 ${issue.output} 必须小于上下文窗口 ${issue.context}`);
     }
   }
   return [...issues];
 }
 
-function applyOverride(
-  conn: SavedConnection,
-  binding: Binding,
-  change: Pick<
-    Extract<Action, { type: "override" }>,
-    "model" | "field" | "value"
-  >,
-) {
-  const model = conn.models.find((m) => m.id === change.model);
-  if (!model) throw new Error("找不到对应模型。");
+/** Apply manual limit/capability changes to the connection's shared settings. */
+function applyChanges(conn: SavedConnection, changes: readonly SettingChange[]) {
+  for (const change of changes) {
+    const model = conn.models.find((m) => m.id === change.model);
+    if (!model) throw new Error("找不到对应模型。");
+    const row = { ...(conn.settings?.[model.id] ?? {}) };
+    if (change.value === null) delete row[change.field];
+    else if (typeof change.value === "number") {
+      const field = change.field as "context" | "output";
+      const automatic = model[field]?.value;
+      row[field] = automatic === undefined ? { value: change.value } : { value: change.value, ack: automatic };
+    } else row[change.field as "reasoning" | "image" | "tools"] = change.value;
+    const settings = { ...(conn.settings ?? {}) };
+    if (Object.keys(row).length) settings[model.id] = row;
+    else delete settings[model.id];
+    conn.settings = Object.keys(settings).length ? settings : undefined;
+  }
+  // A manual output must stay below the context the model will really use.
+  for (const change of changes) {
+    if (change.field !== "context" && change.field !== "output") continue;
+    const model = conn.models.find((m) => m.id === change.model)!;
+    const issue = limitIssue(resolveModel(conn, model));
+    if (issue)
+      throw new Error(
+        `${model.id} 的最大输出 ${issue.output} 必须小于上下文窗口 ${issue.context}。`,
+      );
+  }
+}
 
-  const row = binding.overrides[model.id] ?? {};
-  if (change.value === null) delete row[change.field];
-  else
-    row[change.field] = {
-      value: change.value,
-      ack: model[change.field]?.value,
-    };
-  if (Object.keys(row).length) binding.overrides[model.id] = row;
-  else delete binding.overrides[model.id];
+function setFallback(conn: SavedConnection, context?: number, output?: number) {
+  if (context !== undefined && output !== undefined && output >= context)
+    throw new Error("兜底的最大输出必须小于兜底上下文窗口。");
+  conn.fallback =
+    context === undefined && output === undefined ? undefined : { context, output };
 }
 
 export class Manager {
@@ -118,7 +141,32 @@ export class Manager {
       return snapshotOf(this.committed, agents);
     });
   }
+
+  /**
+   * Real requests can take a while; send them outside the serial queue so other
+   * actions are not blocked, then record the results in a short commit.
+   */
+  private async probe(action: Extract<Action, { type: "probe" }>, paseo: PaseoApi) {
+    const state = await this.serial(() => this.storage.load(paseo));
+    const conn = findConnection(state, action.connection);
+    const results = await probeModels(conn, action.models);
+    return this.serial(async (): Promise<Omit<Operation, "job">> => {
+      const current = await this.storage.load(paseo);
+      const next = structuredClone(current);
+      const target = findConnection(next, action.connection);
+      target.probes = { ...(target.probes ?? {}), ...results };
+      await this.storage.commit(next, null, paseo);
+      this.committed = next;
+      const failed = Object.values(results).filter((result) => !result.ok).length;
+      const total = Object.keys(results).length;
+      return failed
+        ? { message: `已测试 ${total} 个模型：${total - failed} 个可用，${failed} 个失败。`, level: "warning" }
+        : { message: `已测试 ${total} 个模型，全部可用。` };
+    });
+  }
+
   action(action: Action, paseo: PaseoApi) {
+    if (action.type === "probe") return this.probe(action, paseo);
     return this.serial(async (): Promise<Omit<Operation, "job">> => {
       const current = await this.storage.load(paseo);
       this.committed = current;
@@ -130,7 +178,7 @@ export class Manager {
       switch (action.type) {
         case "testConnection": {
           const conn = findConnection(next, action.connection);
-          await refresh(next, conn);
+          await refresh(conn);
           if (conn.error) {
             message = conn.error;
             break;
@@ -216,7 +264,7 @@ export class Manager {
                 agents.find((a) => a.id === b.agent)?.protocols.includes(conn.protocol),
             );
           savedConnection = conn.id;
-          await refresh(next, conn);
+          await refresh(conn);
           if (conn.error) {
             message = "连接已保存，目录加载失败：" + conn.error;
             level = "warning";
@@ -234,7 +282,7 @@ export class Manager {
           break;
         case "refresh": {
           const conn = findConnection(next, action.connection);
-          await refresh(next, conn);
+          await refresh(conn);
           message =
             conn.error ??
             `已拉取 ${conn.models.filter((m) => m.listed).length} 个模型。`;
@@ -245,39 +293,59 @@ export class Manager {
             (c) => !c.lastRefresh || Date.now() - c.lastRefresh >= DAY,
           );
           if (!stale.length) return { message: "目录已是最新" };
-          await Promise.all(stale.map((c) => refresh(next, c)));
+          await Promise.all(stale.map((c) => refresh(c)));
           const failed = stale.filter((c) => c.error).length;
           message = `已检查 ${stale.length} 个连接，失败 ${failed} 个。`;
           if (failed) level = "warning";
           break;
         }
-        case "defaults":
-          if (action.context === undefined && action.output === undefined)
-            delete next.defaults[action.agent];
-          else
-            next.defaults[action.agent] = {
-              context: action.context,
-              output: action.output,
-            };
+        case "selection": {
+          const conn = findConnection(next, action.connection);
+          if (action.fallback) setFallback(conn, action.fallback.context, action.fallback.output);
+          applyChanges(conn, action.changes ?? []);
+          const selected = [...new Set(action.selected)];
+          const targets = [action.agent, ...(action.alsoApply ?? []).filter((a) => a !== action.agent)];
+          for (const agentId of targets) {
+            const descriptor = agents.find((a) => a.id === agentId);
+            if (!descriptor?.protocols.includes(conn.protocol))
+              throw new Error(`${descriptor?.label ?? agentId} 不支持此连接的协议。`);
+            const binding = getBinding(next, agentId, conn.id);
+            binding.selected = [...selected];
+            if (action.default !== undefined) {
+              if (action.default === null || !selected.includes(action.default)) delete binding.default;
+              else binding.default = action.default;
+            } else if (binding.default && !selected.includes(binding.default)) delete binding.default;
+          }
+          if (targets.length > 1) message = `已更新 ${targets.length} 个 Agent 的模型配置`;
           break;
-        case "selection":
-          findConnection(next, action.connection);
-          getBinding(next, action.agent, action.connection).selected = [
-            ...new Set(action.selected),
-          ];
-          for (const change of action.changes ?? [])
-            applyOverride(
-              findConnection(next, action.connection),
-              getBinding(next, action.agent, action.connection),
-              change,
-            );
+        }
+        case "settings":
+          applyChanges(findConnection(next, action.connection), action.changes);
           break;
-        case "override": {
-          applyOverride(
-            findConnection(next, action.connection),
-            getBinding(next, action.agent, action.connection),
-            action,
-          );
+        case "fallback":
+          setFallback(findConnection(next, action.connection), action.context, action.output);
+          break;
+        case "acceptSuggestions": {
+          const conn = findConnection(next, action.connection);
+          const wanted = action.models ? new Set(action.models) : undefined;
+          const changes: SettingChange[] = [];
+          for (const model of conn.models) {
+            if (wanted && !wanted.has(model.id)) continue;
+            const suggestion = model.suggested;
+            if (!suggestion) continue;
+            const setting = conn.settings?.[model.id];
+            if (suggestion.context && !model.context && !setting?.context)
+              changes.push({ model: model.id, field: "context", value: suggestion.context });
+            if (suggestion.output && !model.output && !setting?.output)
+              changes.push({ model: model.id, field: "output", value: suggestion.output });
+          }
+          applyChanges(conn, changes);
+          message = changes.length ? `已采用 ${changes.length} 个推荐值。` : "没有待确认的推荐值。";
+          break;
+        }
+        case "markSeen": {
+          const conn = findConnection(next, action.connection);
+          for (const model of conn.models) delete model.fresh;
           break;
         }
       }
@@ -285,10 +353,9 @@ export class Manager {
       try {
         patch = await preparePatch(this.storage.root, current, next, paseo);
       } catch (error) {
-        // The refreshed catalog can make a selected model unusable (for example
-        // the gateway now reports output >= context). A test should list that
-        // problem instead of failing with one raw error; the refreshed catalog
-        // is not saved, so the working configuration stays in place.
+        // The refreshed catalog can make a selected model unusable. A test
+        // should list that problem instead of failing with one raw error; the
+        // refreshed catalog is not saved, so the working configuration stays.
         if (action.type === "testConnection" && testIssues)
           return {
             message: `${message}\n（因存在以上问题，本次获取的目录未保存，现有配置保持不变。）`,

@@ -126,7 +126,6 @@ export function ConnectionForm({
         (binding) => !agents.find((agent) => agent.id === binding.agent)?.protocols.includes(protocol!),
       )
     : [];
-  const droppedOverrides = dropped.some((binding) => Object.keys(binding.overrides).length > 0);
   const originMismatch = origin && protocol !== null && !origin.protocols.includes(protocol);
   const copyOriginChanged =
     copySource !== undefined && originOf(url) !== undefined && originOf(url) !== originOf(copySource.url);
@@ -313,8 +312,7 @@ export function ConnectionForm({
       {dropped.length && protocol ? (
         <Notice tone="warning" title="保存后这些 Agent 将移除此连接">
           {dropped.map((binding) => agentLabel(binding.agent)).join("、")} 不支持 {protocolFullLabel(protocol)}
-          。它们还没有启用这个连接的模型，保存后会从各自的连接列表中移除
-          {droppedOverrides ? "，在此连接上填写的手动限额也会一并删除" : ""}。
+          。它们还没有启用这个连接的模型，保存后会从各自的连接列表中移除。
         </Notice>
       ) : null}
 

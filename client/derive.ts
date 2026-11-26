@@ -1,25 +1,21 @@
 import type {
   AgentId,
   Binding,
-  Capacity,
   Connection,
-  Limits,
   Model,
   Override,
   Snapshot,
 } from "../shared/contracts";
+import {
+  isChatModel,
+  resolveModel,
+  type LimitField,
+  type ResolvedLimit,
+} from "../shared/limits";
 import { STALE_AFTER_MS } from "./format";
 
 export type AgentDescriptor = Snapshot["agents"][number];
-export type LimitField = "context" | "output";
-export type LimitSource = "manual" | "gateway" | "catalog" | "default";
-
-export interface ResolvedLimit {
-  value?: number;
-  source?: LimitSource;
-  capacity?: Capacity;
-  override?: Override;
-}
+export type { LimitField, LimitSource, ResolvedLimit } from "../shared/limits";
 
 export interface CapacityConflict {
   field: LimitField;
@@ -110,38 +106,39 @@ export function missingSelectionCount(
   return missingModelIds(binding, connection).length + unlistedSelectedModels(binding, connection).length;
 }
 
-export function resolveLimit(
-  binding: Binding | undefined,
-  model: Model,
-  field: LimitField,
-  defaults: Limits | undefined,
-): ResolvedLimit {
-  const override = binding?.overrides[model.id]?.[field];
-  if (override) return { value: override.value, source: "manual", override };
-  const capacity = model[field];
-  if (capacity) return { value: capacity.value, source: capacity.source, capacity };
-  const fallback = defaults?.[field];
-  if (fallback) return { value: fallback, source: "default" };
-  return {};
+/** The limit a model really uses, from the shared resolver (manual → gateway → catalog → fallback). */
+export function resolveLimit(connection: Connection, model: Model, field: LimitField): ResolvedLimit {
+  return resolveModel(connection, model)[field];
 }
 
-export function conflictsFor(binding: Binding | undefined, model: Model): CapacityConflict[] {
-  if (!binding) return [];
+/** Manual values whose automatic counterpart changed since the user confirmed them. */
+export function conflictsFor(connection: Connection, model: Model): CapacityConflict[] {
   const conflicts: CapacityConflict[] = [];
   for (const field of ["context", "output"] as const) {
-    const manual = binding.overrides[model.id]?.[field];
+    const manual = connection.settings?.[model.id]?.[field];
     const automatic = model[field]?.value;
     if (!manual || automatic === undefined) continue;
     if (manual.value !== automatic && manual.ack !== automatic) {
-      conflicts.push({
-        field,
-        manual,
-        automatic,
-        acknowledged: manual.ack,
-      });
+      conflicts.push({ field, manual, automatic, acknowledged: manual.ack });
     }
   }
   return conflicts;
+}
+
+/** Models (of `ids`, or all) with a suggestion still waiting for confirmation. */
+export function pendingModels(connection: Connection, ids?: readonly string[]): Model[] {
+  const wanted = ids ? new Set(ids) : undefined;
+  return connection.models.filter(
+    (model) => (!wanted || wanted.has(model.id)) && isChatModel(model) && resolveModel(connection, model).pending,
+  );
+}
+
+export function freshModels(connection: Connection): Model[] {
+  return connection.models.filter((model) => model.fresh && model.listed);
+}
+
+export function nonChatSelected(binding: Binding | undefined, connection: Connection | undefined): Model[] {
+  return selectedModels(binding, connection).filter((model) => !isChatModel(model));
 }
 
 export function isStaleConnection(connection: Connection, now = Date.now()): boolean {
@@ -155,6 +152,7 @@ export interface AgentSummary {
   conflicts: number;
   missing: number;
   errors: number;
+  pending: number;
   issues: number;
 }
 
@@ -164,6 +162,7 @@ export function agentSummary(snapshot: Snapshot, agent: AgentId, now = Date.now(
   let conflicts = 0;
   let missing = 0;
   let errors = 0;
+  let pending = 0;
   for (const binding of bindings) {
     selected += binding.selected.length;
     const connection = connectionById(snapshot, binding.connection);
@@ -173,10 +172,11 @@ export function agentSummary(snapshot: Snapshot, agent: AgentId, now = Date.now(
       continue;
     }
     if (connection.error) errors += 1;
-    missing += missingSelectionCount(binding, connection);
+    missing += missingSelectionCount(binding, connection) + nonChatSelected(binding, connection).length;
+    pending += pendingModels(connection, binding.selected).length;
     for (const id of binding.selected) {
       const model = modelById(connection, id);
-      if (model) conflicts += conflictsFor(binding, model).length;
+      if (model) conflicts += conflictsFor(connection, model).length;
     }
   }
   return {
@@ -185,6 +185,7 @@ export function agentSummary(snapshot: Snapshot, agent: AgentId, now = Date.now(
     conflicts,
     missing,
     errors,
-    issues: conflicts + missing + errors,
+    pending,
+    issues: conflicts + missing + errors + pending,
   };
 }

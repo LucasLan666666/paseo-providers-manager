@@ -4,6 +4,7 @@ import { Pressable, ScrollView, Text, View } from "react-native";
 import { agentSummary, type AgentDescriptor } from "./derive";
 import { protocolLabel } from "./format";
 import { useLayout, useTokens, withAlpha } from "./ui";
+import { AGENT_SVGS } from "./agentIcons";
 
 const AGENT_ICON: Record<AgentId, string> = {
   claude: "Bot",
@@ -18,16 +19,26 @@ const AGENT_ICON: Record<AgentId, string> = {
   hoplite: "Shield",
 };
 
+/**
+ * Paseo's own icon for the agent (shipped SVG, else the one Paseo reports for a
+ * plugin provider), falling back to a Lucide glyph.
+ */
 export function AgentAvatar({
   agent,
   size = 30,
   selected = false,
+  svg,
 }: {
   agent: AgentId;
   size?: number;
   selected?: boolean;
+  /** An icon Paseo reported for this agent (snapshot.icons). */
+  svg?: string;
 }) {
   const { theme } = useLayout();
+  const official = AGENT_SVGS[agent] ?? svg;
+  const color = selected ? theme.colors.accentForeground : theme.colors.foregroundMuted;
+  const glyph = Math.round(size * 0.52);
   return (
     <View
       style={{
@@ -43,11 +54,11 @@ export function AgentAvatar({
         borderColor: selected ? theme.colors.accent : theme.colors.border,
       }}
     >
-      <Icon
-        name={AGENT_ICON[agent] ?? "Bot"}
-        size={Math.round(size * 0.52)}
-        color={selected ? theme.colors.accentForeground : theme.colors.foregroundMuted}
-      />
+      {official ? (
+        <Icon icon={{ svg: official }} size={glyph} color={color} />
+      ) : (
+        <Icon name={AGENT_ICON[agent] ?? "Bot"} size={glyph} color={color} />
+      )}
     </View>
   );
 }
@@ -119,7 +130,12 @@ export function AgentRail({
                 minWidth: compact ? 0 : undefined,
               })}
             >
-              <AgentAvatar agent={descriptor.id} selected={active} size={compact ? 26 : 30} />
+              <AgentAvatar
+                agent={descriptor.id}
+                selected={active}
+                size={compact ? 26 : 30}
+                svg={snapshot.icons?.[descriptor.id]}
+              />
               <View style={{ flex: compact ? 0 : 1, minWidth: 0, gap: 1 }}>
                 <Text
                   numberOfLines={1}
@@ -187,7 +203,7 @@ export function AgentHeading({
   const summary = agentSummary(snapshot, descriptor.id);
   return (
     <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
-      <AgentAvatar agent={descriptor.id} size={compact ? 42 : 48} selected />
+      <AgentAvatar agent={descriptor.id} size={compact ? 42 : 48} selected svg={snapshot.icons?.[descriptor.id]} />
       <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
         <Text style={t.title} numberOfLines={1}>
           {descriptor.label}

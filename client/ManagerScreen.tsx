@@ -261,17 +261,6 @@ function Manager(props: PluginScreenProps) {
     if (form?.kind === "edit" && form.connectionId === target.id) closeForm();
   };
 
-  const saveDefaults = async (values: { context?: number; output?: number }) => {
-    if (!descriptor) return false;
-    const action: Action = {
-      type: "defaults",
-      agent: descriptor.id,
-      ...(values.context !== undefined ? { context: values.context } : {}),
-      ...(values.output !== undefined ? { output: values.output } : {}),
-    };
-    return manager.run(action, { key: "defaults", errorPrefix: "保存默认限额失败" });
-  };
-
   const body =
     view === "library" || !descriptor ? (
       snapshot ? (
@@ -303,7 +292,6 @@ function Manager(props: PluginScreenProps) {
         onRefreshConnection={refreshConnection}
         onTestConnection={testConnection}
         onOpenLibrary={() => changeView("library")}
-        onSaveDefaults={saveDefaults}
       />
     );
 
@@ -473,7 +461,7 @@ function Manager(props: PluginScreenProps) {
           agent={descriptor}
           connection={modelConnection}
           binding={modelBinding}
-          defaults={snapshot.defaults[descriptor.id]}
+          snapshot={snapshot}
           busy={busy}
           onClose={closeModels}
           onEditConnection={(connection) => openEdit(connection)}

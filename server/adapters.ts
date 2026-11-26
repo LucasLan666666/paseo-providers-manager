@@ -12,6 +12,7 @@ import { opencodeProvider } from "./adapter-opencode";
 import { ompProvider, piProvider } from "./adapter-pi";
 import { antigravityProvider } from "./adapter-antigravity";
 import { museProvider } from "./adapter-muse";
+import type { CodexModelInfo } from "./codex-catalog";
 
 export type { AdapterModel, AdapterConnection, BuiltProvider, ProviderModelChoice } from "./adapter-common";
 
@@ -30,14 +31,15 @@ export type NativeAgentId = Exclude<AgentId, "fx" | "hoplite">;
 export async function buildProvider(
   agent: NativeAgentId,
   connection: AdapterConnection,
-  models: Array<{ id: string; label: string; context?: number; output?: number }>,
+  models: AdapterModel[],
   dir: string,
+  options: { codexCatalog?: readonly CodexModelInfo[] } = {},
 ): Promise<BuiltProvider> {
   switch (agent) {
     case "claude":
       return claudeProvider(connection, models, dir);
     case "codex":
-      return codexProvider(connection, models, dir);
+      return codexProvider(connection, models, dir, options.codexCatalog);
     case "copilot":
       return copilotProvider(connection, models, dir);
     case "opencode":

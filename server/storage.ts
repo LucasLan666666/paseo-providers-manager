@@ -1,9 +1,9 @@
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { PaseoApi } from "./types";
 import type { ProviderPatch } from "./types";
-import { initialState, type State } from "./state";
+import { initialState, migrateState, type State } from "./state";
 
 async function optionalJson<T>(path: string): Promise<T | null> {
   try {
@@ -53,7 +53,7 @@ export class Storage {
       (pending.patch.removeProviders ?? []).every(
         (id) => !config.providers[id],
       );
-    if (matches) await atomicJson(this.statePath, pending.next);
+    if (matches) await atomicJson(this.statePath, migrateState(pending.next));
     await rm(this.pendingPath, { force: true });
     return matches;
   }
@@ -61,10 +61,17 @@ export class Storage {
     await mkdir(this.root, { recursive: true, mode: 0o700 });
     const pending = await optionalJson<Pending>(this.pendingPath);
     if (pending) await this.settle(pending, paseo);
-    const state = await optionalJson<State>(this.statePath);
-    if (state && state.version !== 1)
-      throw new Error("此管理器数据版本无法读取。");
-    return state ?? initialState();
+    const raw = await optionalJson<Parameters<typeof migrateState>[0]>(this.statePath);
+    if (!raw) return initialState();
+    if (raw.version !== 2) {
+      // Keep the old file once so an older plugin build can be restored by hand.
+      const backup = join(this.root, `state.v${raw.version}.backup.json`);
+      await copyFile(this.statePath, backup)
+        .then(() => chmod(backup, 0o600))
+        .catch(() => {});
+    }
+    // The migrated state is written by the next committed action.
+    return migrateState(raw);
   }
   async commit(
     next: State,

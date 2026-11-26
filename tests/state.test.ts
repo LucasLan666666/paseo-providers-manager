@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { PaseoApi } from "@getpaseo/client";
@@ -9,10 +9,12 @@ import {
   initialState,
   getBinding,
   mergeCatalog,
+  migrateState,
   resolvedModels,
   snapshotOf,
   type SavedConnection,
 } from "../server/state";
+import { FALLBACK_LIMITS, naturalCompare, orderedSelection, resolveModel } from "../shared/limits";
 import { randomUUID } from "node:crypto";
 
 function fixture() {
@@ -31,7 +33,7 @@ function fixture() {
   };
   state.connections.push(conn);
   const binding = getBinding(state, "pi", conn.id);
-  mergeCatalog(state, conn, [
+  mergeCatalog(conn, [
     {
       id: "llm",
       label: "LLM",
@@ -41,72 +43,120 @@ function fixture() {
   ]);
   return { state, conn, binding };
 }
-test("opt-in selection, per-agent defaults, manual values and repeated refresh conflicts", () => {
+
+test("limits resolve manual → gateway → catalog → connection fallback, shared by agents", () => {
   const { state, conn, binding } = fixture();
-  assert.deepEqual(binding.selected, []);
   binding.selected = ["llm"];
-  assert.throws(() => resolvedModels(state, binding), /缺少/);
-  state.defaults.pi = { output: 256 };
-  binding.overrides.llm = { context: { value: 2048, ack: 4096 } };
-  assert.deepEqual(resolvedModels(state, binding), [
-    { id: "llm", label: "LLM", context: 2048, output: 256 },
-  ]);
-  mergeCatalog(state, conn, [
-    ...conn.models,
-    { id: "other", label: "Other", listed: true },
-  ]);
-  assert.equal(binding.overrides.llm.context?.ack, 4096);
-  assert.deepEqual(binding.selected, ["llm"]);
-  mergeCatalog(state, conn, [
-    {
-      id: "llm",
-      label: "LLM",
-      listed: true,
-      context: { value: 8192, source: "gateway" },
-    },
-  ]);
-  assert.equal(binding.overrides.llm.context?.ack, undefined);
-  assert.equal(binding.overrides.llm.context?.value, 2048);
-  mergeCatalog(state, conn, []);
+  // No output anywhere: the fallback applies, lowered below the 4096 window.
+  assert.deepEqual(
+    resolvedModels(state, binding).map(({ context, output, outputSource }) => ({ context, output, outputSource })),
+    [{ context: 4096, output: 1024, outputSource: "fallback" }],
+  );
+  conn.settings = { llm: { context: { value: 2048, ack: 4096 }, output: { value: 512 } } };
+  const [model] = resolvedModels(state, binding);
+  assert.equal(model.context, 2048);
+  assert.equal(model.output, 512);
+  // Another agent on the same connection sees the same values.
+  const omp = getBinding(state, "omp", conn.id);
+  omp.selected = ["llm"];
+  assert.equal(resolvedModels(state, omp)[0].context, 2048);
+  // A changed automatic value clears the acknowledgement but keeps the manual value.
+  mergeCatalog(conn, [{ id: "llm", label: "LLM", listed: true, context: { value: 8192, source: "gateway" } }]);
+  assert.equal(conn.settings.llm.context?.ack, undefined);
+  assert.equal(conn.settings.llm.context?.value, 2048);
+  mergeCatalog(conn, []);
   assert.equal(conn.models[0].listed, false);
-  assert.deepEqual(binding.selected, ["llm"]);
   assert.ok(!JSON.stringify(snapshotOf(state, [])).includes("test-secret"));
 });
-test("rejects a maximum output that is not smaller than the context window", () => {
-  const { state, binding } = fixture();
+
+test("an unknown model uses the connection fallback, default 128K / 16K", () => {
+  const { conn } = fixture();
+  const unknown = { id: "x", label: "x", listed: true };
+  const resolved = resolveModel(conn, unknown);
+  assert.equal(resolved.context.value, FALLBACK_LIMITS.context);
+  assert.equal(resolved.output.value, FALLBACK_LIMITS.output);
+  assert.equal(resolved.context.source, "fallback");
+  conn.fallback = { context: 64_000 };
+  assert.equal(resolveModel(conn, unknown).context.value, 64_000);
+  assert.equal(resolveModel(conn, unknown).output.value, FALLBACK_LIMITS.output);
+});
+
+test("only a manual output that fills the window is rejected", () => {
+  const { state, conn, binding } = fixture();
   binding.selected = ["llm"];
-  state.defaults.pi = { context: 4096, output: 4096 };
-  assert.throws(() => resolvedModels(state, binding), /最大输出/);
-  state.defaults.pi = { context: 4096, output: 2048 };
-  assert.deepEqual(resolvedModels(state, binding), [
-    { id: "llm", label: "LLM", context: 4096, output: 2048 },
-  ]);
+  conn.models[0].output = { value: 9000, source: "gateway" };
+  assert.equal(resolvedModels(state, binding)[0].output, 1024, "automatic output is clamped");
+  conn.settings = { llm: { output: { value: 4096 } } };
+  assert.throws(() => resolvedModels(state, binding), /最大输出 4096 必须小于上下文窗口 4096/);
 });
-test("keeps known limits when a later gateway response omits them", () => {
-  const { state, conn } = fixture();
-  mergeCatalog(state, conn, [
-    {
-      id: "llm",
-      label: "LLM",
-      listed: true,
-      context: { value: 8192, source: "gateway" },
-      output: { value: 1024, source: "gateway" },
-    },
-  ]);
-  mergeCatalog(state, conn, [{ id: "llm", label: "LLM", listed: true }]);
-  assert.deepEqual(conn.models[0].context, { value: 8192, source: "gateway" });
-  assert.deepEqual(conn.models[0].output, { value: 1024, source: "gateway" });
-  mergeCatalog(state, conn, [
-    {
-      id: "llm",
-      label: "LLM",
-      listed: true,
-      context: { value: 16384, source: "gateway" },
-    },
-  ]);
-  assert.deepEqual(conn.models[0].context, { value: 16384, source: "gateway" });
-  assert.deepEqual(conn.models[0].output, { value: 1024, source: "gateway" });
+
+test("capabilities come from the catalog and can be overridden per model", () => {
+  const { state, conn, binding } = fixture();
+  binding.selected = ["llm"];
+  assert.deepEqual(resolvedModels(state, binding)[0].caps, { reasoning: false, image: false, tools: true });
+  conn.models[0].caps = { reasoning: true, image: true };
+  conn.settings = { llm: { image: false } };
+  assert.deepEqual(resolvedModels(state, binding)[0].caps, { reasoning: true, image: false, tools: true });
 });
+
+test("the default model goes first, the rest sort by name; helpers never become the default", () => {
+  const connection = {
+    models: [
+      { id: "codex-auto-review", label: "Codex Auto Review", listed: true },
+      { id: "gpt-6.10", label: "gpt-6.10", listed: true },
+      { id: "gpt-6.2", label: "gpt-6.2", listed: true },
+      { id: "img", label: "img", listed: true, kind: "image" as const },
+    ],
+  };
+  const selected = ["codex-auto-review", "img", "gpt-6.10", "gpt-6.2"];
+  // Without an explicit default: the first selected chat model that isn't a helper.
+  assert.deepEqual(orderedSelection({ selected }, connection), [
+    "gpt-6.10",
+    "codex-auto-review",
+    "gpt-6.2",
+    "img",
+  ]);
+  assert.deepEqual(orderedSelection({ selected, default: "gpt-6.2" }, connection), [
+    "gpt-6.2",
+    "codex-auto-review",
+    "gpt-6.10",
+    "img",
+  ]);
+  assert.ok(naturalCompare("gpt-6.2", "gpt-6.10") < 0);
+});
+
+test("new gateway models are flagged after the first catalog, never on it", () => {
+  const { conn } = fixture();
+  assert.equal(conn.models[0].fresh, undefined);
+  mergeCatalog(conn, [...conn.models, { id: "new", label: "new", listed: true }]);
+  assert.equal(conn.models.find((m) => m.id === "new")?.fresh, true);
+  assert.equal(conn.models.find((m) => m.id === "llm")?.fresh, undefined);
+});
+
+test("version-1 state migrates: manual values move to the connection, agent defaults are dropped", () => {
+  const id = randomUUID();
+  const migrated = migrateState({
+    version: 1,
+    owner: "owner",
+    defaults: { pi: { context: 1_000_000, output: 512_000 } },
+    connections: [
+      { id, name: "c", url: "https://x.test/v1", protocol: "chat", catalogProvider: "", hasKey: false, key: "", lastRefresh: null, error: null, models: [] },
+    ],
+    bindings: [
+      { agent: "pi", connection: id, selected: ["m"], overrides: { m: { context: { value: 100 } } } },
+      { agent: "omp", connection: id, selected: [], overrides: { m: { context: { value: 999 }, output: { value: 10 } } } },
+    ],
+  });
+  assert.equal(migrated.version, 2);
+  assert.ok(!("defaults" in migrated));
+  assert.deepEqual(migrated.bindings, [
+    { agent: "pi", connection: id, selected: ["m"] },
+    { agent: "omp", connection: id, selected: [] },
+  ]);
+  assert.deepEqual(migrated.connections[0].settings, { m: { context: { value: 100 }, output: { value: 10 } } });
+  assert.equal(migrated.connections[0].lastRefresh, null, "migrated connections refresh (and match) first");
+});
+
 test("private state and rollback when daemon rejects alias changes", async () => {
   const root = await mkdtemp(join(tmpdir(), "ppm-store-"));
   try {
@@ -132,16 +182,32 @@ test("private state and rollback when daemon rejects alias changes", async () =>
     );
     assert.equal((await store.load(api)).connections[0].name, "Local");
     assert.equal((await stat(join(root, "state.json"))).mode & 0o777, 0o600);
-    assert.equal(
-      JSON.parse(await readFile(join(root, "state.json"), "utf8")).version,
-      1,
-    );
+    assert.equal(JSON.parse(await readFile(join(root, "state.json"), "utf8")).version, 2);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("loading a version-1 file migrates it and keeps a private backup", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ppm-migrate-"));
+  try {
+    await writeFile(
+      join(root, "state.json"),
+      JSON.stringify({ version: 1, owner: "o", connections: [], bindings: [], defaults: {} }),
+      { mode: 0o600 },
+    );
+    const api = { config: { get: async () => ({ config: { providers: {} } }) } } as unknown as PaseoApi;
+    const loaded = await new Storage(root).load(api);
+    assert.equal(loaded.version, 2);
+    const backup = join(root, "state.v1.backup.json");
+    assert.equal(JSON.parse(await readFile(backup, "utf8")).version, 1);
+    assert.equal((await stat(backup)).mode & 0o777, 0o600);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("an interrupted daemon commit is finalized on the next read", async () => {
-  const { writeFile } = await import("node:fs/promises");
   const root = await mkdtemp(join(tmpdir(), "ppm-recovery-"));
   const state = initialState();
   try {

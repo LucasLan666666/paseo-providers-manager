@@ -11,7 +11,6 @@ import {
   type AgentDescriptor,
 } from "./derive";
 import { protocolLabel } from "./format";
-import { DefaultsCard } from "./DefaultsCard";
 import { NativeModels } from "./NativeModels";
 import { BoundConnectionCard, CompatiblePicker } from "./ConnectionCard";
 import {
@@ -41,7 +40,6 @@ export function AgentView({
   onRefreshConnection,
   onTestConnection,
   onOpenLibrary,
-  onSaveDefaults,
 }: {
   snapshot: Snapshot;
   descriptor: AgentDescriptor;
@@ -55,7 +53,6 @@ export function AgentView({
   onRefreshConnection: (connection: Connection) => void;
   onTestConnection: (connection: Connection) => void;
   onOpenLibrary: () => void;
-  onSaveDefaults: (values: { context?: number; output?: number }) => Promise<boolean>;
 }) {
   const { theme, compact } = useLayout();
   const t = useTokens(theme, compact);
@@ -63,7 +60,6 @@ export function AgentView({
   const summary = agentSummary(snapshot, descriptor.id);
   const bindings = bindingsForAgent(snapshot, descriptor.id);
   const available = availableConnections(snapshot, descriptor.id);
-  const defaults = snapshot.defaults[descriptor.id];
 
   const native = descriptor.protocols.length === 0;
   const openAdd = () => setAddOpen(true);
@@ -115,15 +111,11 @@ export function AgentView({
           {summary.errors ? (
             <Stat label="异常" value={String(summary.errors)} tone="danger" />
           ) : null}
+          {summary.pending ? (
+            <Stat label="待确认" value={String(summary.pending)} tone="warning" />
+          ) : null}
         </View>
       </Card>
-
-      <DefaultsCard
-        agent={descriptor.id}
-        limits={defaults}
-        busy={busy === "defaults"}
-        onSave={onSaveDefaults}
-      />
 
       <View style={{ gap: 10 }}>
         <SectionHead
@@ -154,7 +146,6 @@ export function AgentView({
                 snapshot={snapshot}
                 connection={connection}
                 binding={binding}
-                defaults={defaults}
                 busy={busy}
                 onManage={() => onManageModels(connection)}
                 onEdit={() => onEditConnection(connection)}

@@ -20,7 +20,7 @@ interface CopilotModel {
   maxPromptTokens?: number;
   maxContextWindowTokens?: number;
   maxOutputTokens?: number;
-  capabilities: { supports: { toolCalls: true; streaming: true } };
+  capabilities: { supports: { toolCalls: boolean; streaming: true } };
 }
 
 /**
@@ -68,7 +68,7 @@ export async function copilotProvider(
         }
       : {}),
     ...(model.output ? { maxOutputTokens: model.output } : {}),
-    capabilities: { supports: { toolCalls: true, streaming: true } },
+    capabilities: { supports: { toolCalls: model.caps?.tools ?? true, streaming: true } },
   }));
   await writePrivateJson(join(home, "providers.json"), {
     providers: [provider],

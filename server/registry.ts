@@ -5,6 +5,7 @@ import { mkdir, mkdtemp, readdir, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { Binding } from "../shared/contracts";
 import { buildProvider } from "./adapters";
+import { codexBundledCatalog } from "./codex-catalog";
 import { GATEWAY_KEY_ENV } from "./adapter-common";
 import { fxProvider } from "./fx";
 import { agents } from "./agents";
@@ -116,7 +117,9 @@ export async function preparePatch(
       const settings =
         binding.agent === "fx"
           ? await fxProvider(conn, models, dir)
-          : await buildProvider(binding.agent, conn, models, dir);
+          : await buildProvider(binding.agent, conn, models, dir, {
+              ...(binding.agent === "codex" ? { codexCatalog: await codexBundledCatalog() } : {}),
+            });
       providers[id] = {
         ...settings,
         enabled: true,

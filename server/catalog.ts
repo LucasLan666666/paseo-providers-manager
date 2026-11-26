@@ -634,6 +634,11 @@ function responseError(status: number): CatalogError {
 // models.dev enrichment
 // ---------------------------------------------------------------------------
 
+/** The models.dev payload for name matching (shared 10-minute cache); null when unavailable. */
+export function fetchCatalog(options: DiscoverOptions = {}): Promise<unknown | null> {
+  return readCatalog("", options.fetch ?? globalThis.fetch, options);
+}
+
 async function readCatalog(
   catalogProvider: string,
   fetchImpl: typeof fetch,

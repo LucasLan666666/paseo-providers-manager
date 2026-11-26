@@ -1,12 +1,15 @@
 import { Icon } from "@getpaseo/plugin/client/ui";
 import { Text, View } from "react-native";
-import type { Binding, Connection, Limits, Model, Protocol, Snapshot } from "../shared/contracts";
+import type { Binding, Connection, Model, Protocol, Snapshot } from "../shared/contracts";
 import { counterpartProtocol } from "../shared/protocols";
 import {
   conflictsFor,
+  freshModels,
   isStaleConnection,
   missingModelIds,
   missingSelectionCount,
+  nonChatSelected,
+  pendingModels,
   resolveLimit,
   selectedModels,
   unlistedSelectedModels,
@@ -36,7 +39,6 @@ export function BoundConnectionCard({
   snapshot,
   connection,
   binding,
-  defaults,
   busy,
   onManage,
   onEdit,
@@ -47,7 +49,6 @@ export function BoundConnectionCard({
   snapshot: Snapshot;
   connection: Connection;
   binding: Binding;
-  defaults: Limits | undefined;
   busy: string | null;
   onManage: () => void;
   onEdit: () => void;
@@ -66,9 +67,12 @@ export function BoundConnectionCard({
   const testing = busy === `testConnection:${connection.id}`;
   const stale = isStaleConnection(connection, now);
   const conflicts = selected.reduce(
-    (count, model) => count + conflictsFor(binding, model).length,
+    (count, model) => count + conflictsFor(connection, model).length,
     0,
   );
+  const pending = pendingModels(connection, binding.selected);
+  const fresh = freshModels(connection);
+  const nonChat = nonChatSelected(binding, connection);
 
   return (
     <Card testID={`ppm-connection-card-${connection.id}`} style={{ gap: 11 }}>
@@ -200,6 +204,38 @@ export function BoundConnectionCard({
         </Notice>
       ) : null}
 
+      {pending.length ? (
+        <Notice
+          tone="warning"
+          title={`${pending.length} 个已选模型有待确认的推荐值`}
+          action={<Btn label="查看" size="sm" variant="ghost" onPress={onManage} />}
+        >
+          这些值是按同系列推测的，或网上没有公布输出上限。确认前先使用兜底值。
+        </Notice>
+      ) : null}
+
+      {nonChat.length ? (
+        <Notice
+          tone="warning"
+          title={`已选 ${nonChat.length} 个非对话模型`}
+          action={<Btn label="处理" size="sm" variant="ghost" onPress={onManage} />}
+        >
+          {nonChat.slice(0, 3).map((model) => model.id).join("、")}
+          {nonChat.length > 3 ? " 等" : ""}不能用于对话，建议从选择中移除。
+        </Notice>
+      ) : null}
+
+      {fresh.length ? (
+        <Notice
+          tone="accent"
+          title={`网关新增 ${fresh.length} 个模型`}
+          action={<Btn label="查看" size="sm" variant="ghost" onPress={onManage} />}
+        >
+          {fresh.slice(0, 3).map((model) => model.id).join("、")}
+          {fresh.length > 3 ? " 等" : ""}。新模型不会自动启用。
+        </Notice>
+      ) : null}
+
       <View style={{ gap: 7 }}>
         <Text style={t.small}>已选模型</Text>
         {selected.length ? (
@@ -208,8 +244,7 @@ export function BoundConnectionCard({
               <SelectedModelChip
                 key={model.id}
                 model={model}
-                binding={binding}
-                defaults={defaults}
+                connection={connection}
               />
             ))}
             {selected.length > (compact ? 4 : 8) ? (
@@ -290,17 +325,15 @@ export function BoundConnectionCard({
 
 function SelectedModelChip({
   model,
-  binding,
-  defaults,
+  connection,
 }: {
   model: Model;
-  binding: Binding;
-  defaults: Limits | undefined;
+  connection: Connection;
 }) {
   const { theme } = useLayout();
-  const context = resolveLimit(binding, model, "context", defaults);
-  const output = resolveLimit(binding, model, "output", defaults);
-  const conflict = conflictsFor(binding, model).length > 0;
+  const context = resolveLimit(connection, model, "context");
+  const output = resolveLimit(connection, model, "output");
+  const conflict = conflictsFor(connection, model).length > 0;
   return (
     <View
       style={{

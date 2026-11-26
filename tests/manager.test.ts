@@ -1,4 +1,4 @@
-import test from "node:test";
+import test, { after, before } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { once } from "node:events";
@@ -8,6 +8,21 @@ import { tmpdir } from "node:os";
 import type { Socket } from "node:net";
 import type { PaseoApi } from "@getpaseo/client";
 import { Manager } from "../server/manager";
+
+// No test in this file may reach the internet (models.dev enrichment runs on
+// every refresh). Individual tests can fake models.dev through gateway().
+const nativeFetch = globalThis.fetch;
+before(() => {
+  process.env.PPM_DISABLE_CODEX_CATALOG = "1";
+  globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+    const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
+    if (url.hostname === "127.0.0.1" || url.hostname === "localhost") return nativeFetch(input, init);
+    throw new Error(`blocked external request to ${url.hostname}`);
+  }) as typeof fetch;
+});
+after(() => {
+  globalThis.fetch = nativeFetch;
+});
 
 test("catalog refresh, opt-in selection, shared bindings, conflicts, delisting and connection deletion", async () => {
   let rows: unknown[] = [
@@ -92,7 +107,7 @@ test("catalog refresh, opt-in selection, shared bindings, conflicts, delisting a
       enabled: true,
       env: { PPM_OWNER: owner, PPM_GENERATION: join(root, "orphan") },
     };
-    await m.action({ type: "defaults", agent: "pi", output: 512 }, api);
+    await m.action({ type: "fallback", connection, output: 512 }, api);
     assert.ok(!("orphan-alias" in providers));
     rows = [
       { id: "model", context_length: 131072, max_output_tokens: 8192 },
@@ -101,22 +116,21 @@ test("catalog refresh, opt-in selection, shared bindings, conflicts, delisting a
     await m.action({ type: "refresh", connection }, api);
     const refreshed = await m.snapshot(api);
     assert.deepEqual(refreshed.bindings[0].selected, ["model"]);
-    assert.deepEqual(refreshed.bindings[0].overrides.model.context, {
+    // Manual values live on the connection; the changed automatic value cleared the ack.
+    assert.deepEqual(refreshed.connections[0].settings?.model?.context, {
       value: 48000,
     });
     await m.action(
       {
-        type: "override",
-        ...params,
-        model: "model",
-        field: "context",
-        value: 48000,
+        type: "settings",
+        connection,
+        changes: [{ model: "model", field: "context", value: 48000 }],
       },
       api,
     );
     await m.action({ type: "refresh", connection }, api);
     assert.equal(
-      (await m.snapshot(api)).bindings[0].overrides.model.context?.ack,
+      (await m.snapshot(api)).connections[0].settings?.model?.context?.ack,
       131072,
     );
     fail = true;
@@ -140,17 +154,36 @@ test("catalog refresh, opt-in selection, shared bindings, conflicts, delisting a
   }
 });
 
-async function gateway(rows: () => unknown[]) {
-  // Keep these tests offline: the models.dev enrichment would otherwise fetch
-  // live data for models without limits.
+interface GatewayOptions {
+  /** Served as https://models.dev/api.json; otherwise external requests fail. */
+  catalog?: unknown;
+  /** Answers POST requests (real-request tests). */
+  post?: (path: string, body: { model?: string }, auth: string | undefined) => { status: number; body: unknown };
+}
+
+async function gateway(rows: () => unknown[], options: GatewayOptions = {}) {
+  // Keep these tests offline: external hosts are blocked, models.dev can be faked.
   const realFetch = globalThis.fetch;
   globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
     const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
     if (url.hostname === "127.0.0.1" || url.hostname === "localhost") return realFetch(input, init);
+    if (url.hostname === "models.dev" && options.catalog !== undefined)
+      return new Response(JSON.stringify(options.catalog), { headers: { "content-type": "application/json" } });
     throw new Error(`blocked external request to ${url.hostname}`);
   }) as typeof fetch;
   const server = createServer((req, res) => {
-    const ok = req.headers.authorization === "Bearer test-key";
+    const auth = req.headers.authorization;
+    if (req.method === "POST" && options.post) {
+      let raw = "";
+      req.on("data", (chunk) => (raw += chunk));
+      req.on("end", () => {
+        const reply = options.post!(req.url ?? "", JSON.parse(raw || "{}"), auth);
+        res.writeHead(reply.status, { "content-type": "application/json" });
+        res.end(JSON.stringify(reply.body));
+      });
+      return;
+    }
+    const ok = auth === "Bearer test-key";
     res.writeHead(ok ? 200 : 401, { "content-type": "application/json" });
     res.end(JSON.stringify(ok ? { data: rows() } : { error: "unauthorized" }));
   });
@@ -174,11 +207,27 @@ async function gateway(rows: () => unknown[]) {
     },
   } as unknown as PaseoApi;
   const root = await mkdtemp(join(tmpdir(), "ppm-manager-"));
+  const manager = new Manager(root);
   return {
     port: address.port,
     api,
     providers,
-    manager: new Manager(root),
+    manager,
+    async save(protocol: "chat" | "responses" = "chat", extra: Record<string, unknown> = {}) {
+      const result = await manager.action(
+        {
+          type: "saveConnection",
+          name: "Relay",
+          url: `http://127.0.0.1:${address.port}/v1`,
+          protocol,
+          key: "test-key",
+          catalogProvider: "",
+          ...extra,
+        },
+        api,
+      );
+      return result.connection!;
+    },
     async close() {
       globalThis.fetch = realFetch;
       for (const socket of sockets) socket.destroy();
@@ -188,31 +237,17 @@ async function gateway(rows: () => unknown[]) {
   };
 }
 
-test("test all models checks the limits the config really uses (agent defaults, overrides)", async () => {
+test("test all models passes with fallback limits; real problems are warnings", async () => {
   let rows: unknown[] = [{ id: "m1" }];
   const g = await gateway(() => rows);
   try {
-    const saved = await g.manager.action(
-      {
-        type: "saveConnection",
-        name: "Relay",
-        url: `http://127.0.0.1:${g.port}/v1`,
-        protocol: "chat",
-        key: "test-key",
-        catalogProvider: "",
-      },
-      g.api,
-    );
-    const connection = saved.connection;
-    assert.ok(connection, "saveConnection returns the connection id");
-    // The gateway reports no limits; Pi gets them from the agent defaults.
-    await g.manager.action({ type: "defaults", agent: "pi", context: 64000, output: 4096 }, g.api);
+    const connection = await g.save();
+    // The gateway reports no limits; Pi gets the connection fallback (128K / 16K).
     await g.manager.action({ type: "selection", agent: "pi", connection, selected: ["m1"] }, g.api);
     assert.ok(g.providers["ppm-pi-" + connection]);
     const passed = await g.manager.action({ type: "testConnection", connection }, g.api);
     assert.match(passed.message, /全部通过/);
     assert.equal(passed.level, undefined);
-    // A real issue is reported as a warning, not a success.
     rows = [];
     const warned = await g.manager.action({ type: "testConnection", connection }, g.api);
     assert.match(warned.message, /发现 1 个问题/);
@@ -243,7 +278,6 @@ test("a copied connection reuses the source key only on the same origin", async 
     const created = snapshot.connections.find((c) => c.id === copy.connection);
     assert.equal(created?.hasKey, true);
     assert.equal(created?.error, null);
-    // A blank key field on a copy also means "use the source key".
     const blank = await g.manager.action(
       { ...base, name: "Blank key", protocol: "responses", key: "", copyKeyFrom: source },
       g.api,
@@ -251,13 +285,7 @@ test("a copied connection reuses the source key only on the same origin", async 
     assert.equal(blank.level, undefined, blank.message);
     await assert.rejects(
       g.manager.action(
-        {
-          ...base,
-          url: `http://localhost:${g.port}/v1`,
-          name: "Other origin",
-          protocol: "responses",
-          copyKeyFrom: source,
-        },
+        { ...base, url: `http://localhost:${g.port}/v1`, name: "Other origin", protocol: "responses", copyKeyFrom: source },
         g.api,
       ),
       /重新输入 Key/,
@@ -270,17 +298,10 @@ test("a copied connection reuses the source key only on the same origin", async 
 test("switching protocol drops empty bindings of agents that cannot use it", async () => {
   const g = await gateway(() => [{ id: "m1" }]);
   try {
-    const action = {
-      type: "saveConnection" as const,
-      name: "Relay",
-      url: `http://127.0.0.1:${g.port}/v1`,
-      catalogProvider: "",
-      key: "test-key",
-    };
-    const connection = (await g.manager.action({ ...action, protocol: "responses" }, g.api)).connection!;
+    const connection = await g.save("responses");
     await g.manager.action({ type: "selection", agent: "codex", connection, selected: [] }, g.api);
     await g.manager.action({ type: "selection", agent: "pi", connection, selected: [] }, g.api);
-    await g.manager.action({ ...action, id: connection, protocol: "chat" }, g.api);
+    await g.save("chat", { id: connection });
     const agents = (await g.manager.snapshot(g.api)).bindings.map((b) => b.agent);
     assert.deepEqual(agents, ["pi"]);
   } finally {
@@ -291,66 +312,176 @@ test("switching protocol drops empty bindings of agents that cannot use it", asy
 test("providers are compared against the deployed PPM_FINGERPRINT", async () => {
   const g = await gateway(() => [{ id: "m1", context_length: 64000, max_output_tokens: 4096 }]);
   try {
-    const connection = (
-      await g.manager.action(
-        {
-          type: "saveConnection",
-          name: "Relay",
-          url: `http://127.0.0.1:${g.port}`,
-          protocol: "responses",
-          key: "test-key",
-          catalogProvider: "",
-        },
-        g.api,
-      )
-    ).connection!;
+    const connection = await g.save("responses", { url: `http://127.0.0.1:${g.port}` });
     await g.manager.action({ type: "selection", agent: "codex", connection, selected: ["m1"] }, g.api);
     const env = () => (g.providers["ppm-codex-" + connection] as { env: Record<string, string> }).env;
     const toml = await readFile(join(env().CODEX_HOME, "config.toml"), "utf8");
     assert.match(toml, /base_url = "http:\/\/127\.0\.0\.1:\d+"/, "the URL is used as entered");
     assert.ok(env().PPM_FINGERPRINT);
     const first = env().PPM_GENERATION;
-    // An unrelated action leaves an up-to-date provider alone.
-    await g.manager.action({ type: "defaults", agent: "pi", context: 64000, output: 4096 }, g.api);
+    // The fallback does not affect a model with gateway limits: nothing regenerates.
+    await g.manager.action({ type: "fallback", connection, output: 4096 }, g.api);
     assert.equal(env().PPM_GENERATION, first);
-    // A provider generated before PPM_FINGERPRINT existed is not regenerated either.
     delete env().PPM_FINGERPRINT;
-    await g.manager.action({ type: "defaults", agent: "pi", context: 64000, output: 2048 }, g.api);
+    await g.manager.action({ type: "fallback", connection, output: 2048 }, g.api);
     assert.equal(env().PPM_GENERATION, first);
-    // A deployed fingerprint that differs (an older generator) regenerates it.
     env().PPM_FINGERPRINT = "older-generator";
-    await g.manager.action({ type: "defaults", agent: "pi", context: 64000, output: 1024 }, g.api);
+    await g.manager.action({ type: "fallback", connection, output: 1024 }, g.api);
     assert.notEqual(env().PPM_GENERATION, first);
   } finally {
     await g.close();
   }
 });
 
-test("a test lists limits that the refreshed catalog breaks, and keeps the working catalog", async () => {
+test("a test lists a manual value the refreshed catalog breaks, and keeps the working catalog", async () => {
   let rows: unknown[] = [{ id: "m1", context_length: 64000, max_output_tokens: 4096 }];
   const g = await gateway(() => rows);
   try {
-    const connection = (
-      await g.manager.action(
-        {
-          type: "saveConnection",
-          name: "Relay",
-          url: `http://127.0.0.1:${g.port}/v1`,
-          protocol: "chat",
-          key: "test-key",
-          catalogProvider: "",
-        },
-        g.api,
-      )
-    ).connection!;
+    const connection = await g.save();
     await g.manager.action({ type: "selection", agent: "pi", connection, selected: ["m1"] }, g.api);
-    rows = [{ id: "m1", context_length: 1000, max_output_tokens: 2000 }];
+    await g.manager.action(
+      { type: "settings", connection, changes: [{ model: "m1", field: "output", value: 4000 }] },
+      g.api,
+    );
+    rows = [{ id: "m1", context_length: 1000 }];
     const tested = await g.manager.action({ type: "testConnection", connection }, g.api);
     assert.equal(tested.level, "warning");
-    assert.match(tested.message, /最大输出 2000 必须小于上下文窗口 1000/);
+    assert.match(tested.message, /最大输出 4000 必须小于上下文窗口 1000/);
     assert.match(tested.message, /未保存/);
     const model = (await g.manager.snapshot(g.api)).connections[0].models[0];
     assert.equal(model.context?.value, 64000);
+  } finally {
+    await g.close();
+  }
+});
+
+test("selection sets the default model, orders the picker and can apply to other agents", async () => {
+  const g = await gateway(() => [
+    { id: "zeta", context_length: 64000, max_output_tokens: 4096 },
+    { id: "alpha", context_length: 64000, max_output_tokens: 4096 },
+    { id: "beta", context_length: 64000, max_output_tokens: 4096 },
+  ]);
+  try {
+    const connection = await g.save();
+    await g.manager.action(
+      {
+        type: "selection",
+        agent: "pi",
+        connection,
+        selected: ["zeta", "alpha", "beta"],
+        default: "beta",
+        alsoApply: ["omp", "opencode"],
+      },
+      g.api,
+    );
+    const snapshot = await g.manager.snapshot(g.api);
+    for (const agent of ["pi", "omp", "opencode"]) {
+      const binding = snapshot.bindings.find((b) => b.agent === agent);
+      assert.deepEqual(binding?.selected, ["zeta", "alpha", "beta"]);
+      assert.equal(binding?.default, "beta");
+    }
+    const pi = g.providers["ppm-pi-" + connection] as { models: Array<{ id: string; isDefault?: boolean }> };
+    assert.deepEqual(pi.models.map((m) => m.id), ["ppm/beta", "ppm/alpha", "ppm/zeta"]);
+    assert.equal(pi.models[0].isDefault, true);
+    await assert.rejects(
+      g.manager.action({ type: "selection", agent: "pi", connection, selected: ["alpha"], alsoApply: ["claude"] }, g.api),
+      /不支持此连接的协议/,
+    );
+  } finally {
+    await g.close();
+  }
+});
+
+const fakeCatalog = {
+  xai: {
+    id: "xai",
+    models: {
+      "grok-x": {
+        limit: { context: 500000, output: 500000 },
+        reasoning: true,
+        tool_call: true,
+        modalities: { input: ["text", "image"], output: ["text"] },
+        canonical_model_id: "xai/grok-x",
+      },
+    },
+  },
+  openai: {
+    id: "openai",
+    models: {
+      "gpt-x": {
+        limit: { context: 1050000, output: 128000 },
+        reasoning: true,
+        tool_call: true,
+        modalities: { input: ["text"], output: ["text"] },
+        cost: { input: 1, output: 2, tiers: [{ input: 2, output: 4, tier: { type: "context", size: 272000 } }] },
+        canonical_model_id: "openai/gpt-x",
+      },
+    },
+  },
+  baai: {
+    id: "baai",
+    models: {
+      "bge-m": { type: "embedding", limit: { context: 8192, output: 1 }, canonical_model_id: "baai/bge-m" },
+    },
+  },
+};
+
+test("refresh matches models.dev by name: limits, capabilities, suggestions and non-chat models", async () => {
+  let rows: unknown[] = [{ id: "grok-x" }, { id: "gpt-x" }, { id: "bge-m" }, { id: "unknown-y" }];
+  const g = await gateway(() => rows, { catalog: fakeCatalog });
+  try {
+    const connection = await g.save();
+    let models = (await g.manager.snapshot(g.api)).connections[0].models;
+    const byId = (id: string) => models.find((m) => m.id === id)!;
+    assert.deepEqual(byId("grok-x").context, { value: 500000, source: "catalog", ref: "xai/grok-x" });
+    assert.equal(byId("grok-x").output, undefined, "an output equal to the context is not trusted");
+    assert.deepEqual(byId("grok-x").suggested, { output: 32768, reason: "output-unknown", ref: "xai/grok-x" });
+    assert.deepEqual(byId("grok-x").caps, { reasoning: true, image: true, tools: true });
+    assert.equal(byId("gpt-x").context?.value, 272000, "OpenAI uses the economical window by default");
+    assert.equal(byId("gpt-x").full, 1050000);
+    assert.equal(byId("gpt-x").output?.value, 128000);
+    assert.equal(byId("bge-m").kind, "embedding");
+    assert.equal(byId("unknown-y").context, undefined);
+    assert.equal(byId("unknown-y").fresh, undefined, "the first catalog is not flagged as new");
+
+    const accepted = await g.manager.action({ type: "acceptSuggestions", connection }, g.api);
+    assert.match(accepted.message, /已采用 1 个推荐值/);
+    assert.deepEqual((await g.manager.snapshot(g.api)).connections[0].settings?.["grok-x"]?.output, { value: 32768 });
+
+    await g.manager.action({ type: "selection", agent: "pi", connection, selected: ["grok-x", "bge-m"] }, g.api);
+    const tested = await g.manager.action({ type: "testConnection", connection }, g.api);
+    assert.equal(tested.level, "warning");
+    assert.match(tested.message, /bge-m：嵌入模型，不能用于对话/);
+
+    rows = [...rows, { id: "brand-new" }];
+    await g.manager.action({ type: "refresh", connection }, g.api);
+    models = (await g.manager.snapshot(g.api)).connections[0].models;
+    assert.equal(byId("brand-new").fresh, true);
+    await g.manager.action({ type: "markSeen", connection }, g.api);
+    models = (await g.manager.snapshot(g.api)).connections[0].models;
+    assert.equal(byId("brand-new").fresh, undefined);
+  } finally {
+    await g.close();
+  }
+});
+
+test("real-request tests record per-model results and never echo the key", async () => {
+  const g = await gateway(() => [{ id: "good" }, { id: "bad" }], {
+    post: (path, body, auth) =>
+      path === "/v1/chat/completions" && body.model === "good" && auth === "Bearer test-key"
+        ? { status: 200, body: { choices: [{ message: { content: "ok" } }] } }
+        : { status: 404, body: { error: { message: `model not found (auth ${auth})` } } },
+  });
+  try {
+    const connection = await g.save();
+    const result = await g.manager.action({ type: "probe", connection, models: ["good", "bad"] }, g.api);
+    assert.equal(result.level, "warning");
+    assert.match(result.message, /1 个可用，1 个失败/);
+    const probes = (await g.manager.snapshot(g.api)).connections[0].probes!;
+    assert.equal(probes.good.ok, true);
+    assert.equal(probes.bad.ok, false);
+    assert.match(probes.bad.error ?? "", /^HTTP 404 model not found/);
+    assert.ok(!probes.bad.error?.includes("test-key"), "the key is redacted");
   } finally {
     await g.close();
   }

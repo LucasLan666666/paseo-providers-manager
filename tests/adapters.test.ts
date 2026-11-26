@@ -4,6 +4,8 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildProvider } from "../server/adapters";
+import { codexCatalog } from "../server/adapter-codex";
+import type { CodexModelInfo } from "../server/codex-catalog";
 import {
   anthropicBase,
   antigravityPickerId,
@@ -180,6 +182,74 @@ test("unsupported agents fail instead of falling through to another endpoint", a
       buildProvider("muse", connection("chat"), models, join(root, "muse")),
       /没有可验证/,
     );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+const bundled: CodexModelInfo[] = [
+  { slug: "gpt-6-luna", display_name: "GPT-6-Luna", visibility: "list", context_window: 272000, max_context_window: 872000, input_modalities: ["text", "image"], base_instructions: "luna" },
+  { slug: "gpt-5.5", display_name: "GPT-5.5", visibility: "list", context_window: 272000, max_context_window: 272000, base_instructions: "5.5" },
+];
+
+test("Codex catalog keeps built-in models and only adds unknown or manually changed ones", () => {
+  const caps = { reasoning: true, image: false, tools: true };
+  assert.equal(
+    codexCatalog([{ id: "gpt-6-luna", label: "Luna", context: 1050000, contextSource: "catalog", caps }], bundled),
+    undefined,
+    "a known model without a manual value keeps Codex's own window",
+  );
+  assert.equal(codexCatalog([{ id: "x", label: "x", context: 1000, caps }], undefined), undefined);
+  const catalog = codexCatalog(
+    [
+      { id: "gpt-5.5", label: "GPT-5.5", context: 200000, contextSource: "manual", caps },
+      { id: "gpt-5.5-openai-compact", label: "compact", context: 272000, contextSource: "catalog", caps },
+      { id: "gpt-image-2", label: "img", context: 1, chat: false },
+    ],
+    bundled,
+  )!;
+  assert.deepEqual(catalog.map((entry) => entry.slug), ["gpt-6-luna", "gpt-5.5", "gpt-5.5-openai-compact"]);
+  assert.equal(catalog[0], bundled[0], "untouched entries are copied as-is");
+  assert.equal(catalog[1].context_window, 200000);
+  assert.equal(catalog[1].max_context_window, 272000);
+  assert.equal(catalog[2].base_instructions, "5.5", "an unknown model clones its family parent");
+  assert.equal(catalog[2].context_window, 272000);
+  assert.deepEqual(catalog[2].input_modalities, ["text"]);
+});
+
+test("Codex writes model_catalog_json only when the catalog changes", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ppm-adapters-"));
+  try {
+    const plain = await buildProvider("codex", connection("responses"), [{ id: "gpt-6-luna", label: "L", context: 272000 }], join(root, "a"), { codexCatalog: bundled });
+    assert.doesNotMatch(await readFile(join(plain.env.CODEX_HOME, "config.toml"), "utf8"), /model_catalog_json/);
+    const custom = await buildProvider("codex", connection("responses"), [{ id: "relay-only", label: "R", context: 64000 }], join(root, "b"), { codexCatalog: bundled });
+    const toml = await readFile(join(custom.env.CODEX_HOME, "config.toml"), "utf8");
+    assert.match(toml, /model_catalog_json = ".*models\.json"/);
+    const written = JSON.parse(await readFile(join(custom.env.CODEX_HOME, "models.json"), "utf8"));
+    assert.deepEqual(written.models.map((entry: CodexModelInfo) => entry.slug), ["gpt-6-luna", "gpt-5.5", "relay-only"]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Claude Code only receives limits for models it doesn't know or manual outputs", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ppm-adapters-"));
+  try {
+    const anthropic = { ...connection("anthropic"), url: "https://gateway.test" };
+    const known = await buildProvider("claude", anthropic, [{ id: "claude-opus-5-5", label: "Opus", context: 1000000, output: 128000, outputSource: "catalog" }], join(root, "a"));
+    assert.equal(known.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS, "");
+    assert.equal(known.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS, "");
+    const mixed = await buildProvider(
+      "claude",
+      anthropic,
+      [
+        { id: "claude-opus-5-5", label: "Opus", context: 1000000, output: 64000, outputSource: "manual" },
+        { id: "glm-4.7", label: "GLM", context: 204800, output: 131072, outputSource: "catalog" },
+      ],
+      join(root, "b"),
+    );
+    assert.equal(mixed.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS, "204800");
+    assert.equal(mixed.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS, "64000");
   } finally {
     await rm(root, { recursive: true, force: true });
   }
