@@ -1,6 +1,7 @@
 import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import type { AgentId, Protocol } from "../shared/contracts";
+import type { ProviderProfileModel } from "@getpaseo/protocol/provider-config";
+import type { AgentId, CodexReasoning, Protocol } from "../shared/contracts";
 import { protocolInfo } from "../shared/protocols";
 import { L } from "./i18n";
 
@@ -14,6 +15,8 @@ export interface AdapterModel {
   contextSource?: "manual" | "gateway" | "catalog" | "fallback";
   outputSource?: "manual" | "gateway" | "catalog" | "fallback";
   caps?: { reasoning: boolean; image: boolean; tools: boolean };
+  reasoningOverride?: boolean;
+  codexReasoning?: CodexReasoning;
   /** False for embedding/image/… models; adapters skip them where it matters. */
   chat?: boolean;
 }
@@ -34,6 +37,7 @@ export interface ProviderModelChoice {
   id: string;
   label: string;
   isDefault?: boolean;
+  thinkingOptions?: ProviderProfileModel["thinkingOptions"];
 }
 
 /** The subset of Paseo's custom-provider entry an adapter owns. */

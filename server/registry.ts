@@ -28,13 +28,15 @@ const hashOf = (value: unknown) =>
  * claude without CLAUDE_CONFIG_DIR, codex through `-c` instead of CODEX_HOME,
  * pi/omp through a `-e` extension instead of a private agent dir, opencode
  * without private XDG roots, antigravity sharing ~/.gemini.
+ * v3: codex publishes per-model thinkingOptions and per-connection alias/effort
+ * overrides; opencode stores config & key in private files injected at session open.
  */
 const GENERATOR_VERSIONS: Partial<Record<Binding["agent"], number>> = {
   claude: 2,
-  codex: 2,
+  codex: 3,
   pi: 2,
   omp: 2,
-  opencode: 2,
+  opencode: 3,
   antigravity: 2,
 };
 
@@ -115,7 +117,12 @@ export async function preparePatch(
       ?.PPM_GENERATION;
     if (!generation) continue;
     try {
-      await stat(generation);
+      const openCodeConfig = (entry.env as Record<string, string>).PPM_OPENCODE_CONFIG;
+      if (openCodeConfig) {
+        await Promise.all([stat(openCodeConfig), stat(join(generation, "gateway.key"))]);
+      } else {
+        await stat(generation);
+      }
     } catch {
       broken.add(id);
     }

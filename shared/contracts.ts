@@ -74,6 +74,12 @@ const model = z.object({
   /** Appeared in a refresh and not yet viewed in the model sheet. */
   fresh: z.boolean().optional(),
 });
+export const codexReasoningSchema = z.object({
+  model: z.string().trim().min(1).max(2048).regex(/^[^\0\r\n]+$/).optional(),
+  efforts: z.array(z.string().trim().regex(/^[a-z][a-z0-9_-]{0,31}$/)).min(1).max(32).optional(),
+});
+export type CodexReasoning = z.infer<typeof codexReasoningSchema>;
+
 /** Per-model manual settings, shared by every agent on the connection. */
 const modelSetting = z.object({
   context: override.optional(),
@@ -81,6 +87,7 @@ const modelSetting = z.object({
   reasoning: z.boolean().optional(),
   image: z.boolean().optional(),
   tools: z.boolean().optional(),
+  codexReasoning: codexReasoningSchema.optional(),
 });
 const probe = z.object({
   ok: z.boolean(),
@@ -127,6 +134,11 @@ const snapshot = z.object({
 });
 const connection = z.uuid();
 const settingChange = z.discriminatedUnion("field", [
+  z.object({
+    model: id,
+    field: z.literal("codexReasoning"),
+    value: codexReasoningSchema.nullable(),
+  }),
   z.object({
     model: id,
     field: z.enum(["context", "output"]),

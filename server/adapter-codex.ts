@@ -11,11 +11,57 @@ import {
   type AdapterConnection,
   type AdapterModel,
   type BuiltProvider,
+  type ProviderModelChoice,
 } from "./adapter-common";
 import type { CodexModelInfo } from "./codex-catalog";
+import { L } from "./i18n";
 
 function tomlString(value: string): string {
   return JSON.stringify(value);
+}
+
+function codexModelChoices(
+  models: readonly AdapterModel[],
+  catalog: readonly CodexModelInfo[] | undefined,
+): ProviderModelChoice[] {
+  const bySlug = new Map(catalog?.map((entry) => [entry.slug, entry]));
+  return modelChoices("codex", models).map((choice, index) => {
+    if (models[index].chat === false) return choice;
+    if (models[index].reasoningOverride === false) return { ...choice, thinkingOptions: [] };
+    const entry = bySlug.get(choice.id);
+    if (!entry || !Array.isArray(entry.supported_reasoning_levels)) return choice;
+    const thinkingOptions = reasoningLevels(entry).map(({ effort, description }) => ({
+      id: effort,
+      label: effort,
+      ...(description ? { description } : {}),
+      ...(effort === entry.default_reasoning_level ? { isDefault: true } : {}),
+    }));
+    return { ...choice, thinkingOptions };
+  });
+}
+
+function reasoningLevels(entry: CodexModelInfo): NonNullable<CodexModelInfo["supported_reasoning_levels"]> {
+  if (!Array.isArray(entry.supported_reasoning_levels)) return [];
+  const levels = new Map<string, { effort: string; description?: string }>();
+  for (const level of entry.supported_reasoning_levels) {
+    const effort = level?.effort;
+    if (typeof effort !== "string" || !effort.trim() || levels.has(effort)) continue;
+    levels.set(effort, {
+      effort,
+      ...(typeof level.description === "string" && level.description ? { description: level.description } : {}),
+    });
+  }
+  return [...levels.values()];
+}
+
+function reasoningMetadata(model: AdapterModel, source: CodexModelInfo, trusted: boolean) {
+  if (model.reasoningOverride === false || !trusted) {
+    return { supported_reasoning_levels: [], default_reasoning_level: null };
+  }
+  const allowed = model.codexReasoning?.efforts;
+  const levels = reasoningLevels(source).filter(({ effort }) => !allowed || allowed.includes(effort));
+  const defaultLevel = levels.find(({ effort }) => effort === source.default_reasoning_level) ?? levels[0];
+  return { supported_reasoning_levels: levels, default_reasoning_level: defaultLevel?.effort ?? null };
 }
 
 /**
@@ -31,15 +77,7 @@ function templateFor(slug: string, bundled: readonly CodexModelInfo[]): CodexMod
     .sort((a, b) => b.slug.length - a.slug.length)[0];
 }
 
-/**
- * Codex knows the windows of its own models; models it doesn't know get a
- * generic fallback. `model_catalog_json` replaces the whole built-in catalog,
- * so the generated catalog is the bundled one with only these changes:
- *  - a known model whose context the user set manually gets that context
- *  - an unknown chat model gets an entry cloned from a model of its family
- *    (unknown models without one are left to Codex)
- * Returns undefined when nothing needs changing (Codex keeps its own catalog).
- */
+/** Overlay the bundled catalog, which Codex replaces wholesale when a custom file is supplied. */
 export function codexCatalog(
   models: readonly AdapterModel[],
   bundled: readonly CodexModelInfo[] | undefined,
@@ -49,18 +87,32 @@ export function codexCatalog(
   const replaced = new Map<string, CodexModelInfo>();
   const added: CodexModelInfo[] = [];
   for (const model of models) {
-    if (model.chat === false || !model.context) continue;
+    if (model.chat === false) continue;
     const known = bySlug.get(model.id);
     if (known) {
-      if (model.contextSource !== "manual") continue;
+      const context = model.contextSource === "manual" ? model.context : undefined;
+      const overrideReasoning = model.reasoningOverride === false || model.codexReasoning?.efforts !== undefined;
+      if (!context && !overrideReasoning) continue;
       replaced.set(model.id, {
         ...known,
-        context_window: model.context,
-        max_context_window: Math.max(model.context, known.max_context_window ?? 0),
+        ...(context ? {
+          context_window: context,
+          max_context_window: Math.max(context, known.max_context_window ?? 0),
+        } : {}),
+        ...(overrideReasoning ? reasoningMetadata(model, known, true) : {}),
       });
       continue;
     }
-    const template = templateFor(model.id, bundled);
+    const mappedSlug = model.codexReasoning?.model;
+    const mapped = mappedSlug ? bySlug.get(mappedSlug) : undefined;
+    if (mappedSlug && !mapped) {
+      throw new Error(L(
+        `${model.id} 的 Codex 映射 ${mappedSlug} 不在捆绑目录中。`,
+        `Codex mapping ${mappedSlug} for ${model.id} is missing from the bundled catalog.`,
+      ));
+    }
+    const family = model.context ? templateFor(model.id, bundled) : undefined;
+    const template = mapped ?? family;
     if (!template) continue;
     added.push({
       ...template,
@@ -68,11 +120,11 @@ export function codexCatalog(
       display_name: model.label.trim() || model.id,
       description: `${model.id} (Providers Manager)`,
       visibility: "list",
-      context_window: model.context,
-      max_context_window: model.context,
+      ...(model.context ? { context_window: model.context, max_context_window: model.context } : {}),
       input_modalities: model.caps?.image ? ["text", "image"] : ["text"],
       upgrade: null,
       availability_nux: null,
+      ...reasoningMetadata(model, template, mapped !== undefined),
     });
   }
   if (!replaced.size && !added.length) return undefined;
@@ -87,8 +139,8 @@ export function codexCatalog(
  * generation, which hid all of that and lost history on every change.
  *
  * Codex 0.172 removed wire_api = "chat"; chat is deliberately rejected. Codex has
- * no per-model output limit, so only context windows are written (through a
- * model catalog file referenced by model_catalog_json, see codexCatalog).
+ * no per-model output limit. Context and reasoning overrides are written to
+ * the model catalog file referenced by model_catalog_json.
  */
 export async function codexProvider(
   connection: AdapterConnection,
@@ -123,6 +175,6 @@ export async function codexProvider(
       // receives a disposable credential instead of an unrelated ambient one.
       [GATEWAY_KEY_ENV]: key || "ppm-no-key",
     },
-    models: modelChoices("codex", models),
+    models: codexModelChoices(models, catalog ?? bundled),
   };
 }

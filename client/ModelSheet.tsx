@@ -15,6 +15,7 @@ import type {
   SettingChange,
   Snapshot,
 } from "../shared/contracts";
+import { codexReasoningSchema } from "../shared/contracts";
 import {
   defaultModelId,
   fallbackLimits,
@@ -56,6 +57,7 @@ import type { Lang } from "../shared/i18n";
 
 type FilterTab = "all" | "selected" | "issues";
 type CapsDraft = Record<string, Partial<Record<CapabilityField, boolean>>>;
+type CodexDraft = Record<string, { model: string; efforts: string }>;
 
 const CAPABILITIES: Array<{ field: CapabilityField; label: (tr: Translate) => string; icon: string }> = [
   { field: "reasoning", label: (tr) => tr("推理", "Reasoning"), icon: "Brain" },
@@ -137,8 +139,10 @@ function collectChanges(
   connection: Connection,
   texts: Record<string, string>,
   caps: CapsDraft,
+  codex: CodexDraft,
   acknowledged: ReadonlySet<string>,
   lang: Lang,
+  tr: Translate,
 ): { changes: SettingChange[]; errors: Record<string, string> } {
   const changes: SettingChange[] = [];
   const errors: Record<string, string> = {};
@@ -166,6 +170,32 @@ function collectChanges(
       if (value === connection.settings?.[model]?.[field]) continue;
       changes.push({ model, field, value: value ?? null });
     }
+  }
+  for (const [model, draft] of Object.entries(codex)) {
+    if (!modelById(connection, model)) continue;
+    const slug = draft.model.trim();
+    const efforts = [
+      ...new Set(
+        draft.efforts
+          .split(/[\s,，]+/)
+          .map((item) => item.trim().toLowerCase())
+          .filter(Boolean),
+      ),
+    ];
+    const initial = connection.settings?.[model]?.codexReasoning;
+    const result = codexReasoningSchema.safeParse({
+      ...(slug ? { model: slug } : {}),
+      ...(efforts.length ? { efforts } : {}),
+    });
+    if (!result.success) {
+      errors[`${model}${KEY_SEPARATOR}codexReasoning`] = tr(
+        "请输入有效的模型 ID 和以逗号分隔的小写强度 ID。",
+        "Enter a valid model ID and comma-separated lowercase effort IDs.",
+      );
+      continue;
+    }
+    if (slug === (initial?.model ?? "") && sameStringSet(efforts, initial?.efforts ?? [])) continue;
+    changes.push({ model, field: "codexReasoning", value: slug || efforts.length ? result.data : null });
   }
   return { changes, errors };
 }
@@ -201,6 +231,7 @@ export function ModelSheet({
   const [explicitDefault, setExplicitDefault] = useState<string | null>(null);
   const [texts, setTexts] = useState<Record<string, string>>({});
   const [caps, setCaps] = useState<CapsDraft>({});
+  const [codex, setCodex] = useState<CodexDraft>({});
   const [fallbackText, setFallbackText] = useState({ context: "", output: "" });
   const [alsoApply, setAlsoApply] = useState<AgentId[]>([]);
   const [acknowledged, setAcknowledged] = useState<Set<string>>(new Set());
@@ -228,6 +259,7 @@ export function ModelSheet({
     }
     setTexts(nextTexts);
     setCaps({});
+    setCodex({});
     setFallbackText({
       context: rawTokens(connection.fallback?.context),
       output: rawTokens(connection.fallback?.output),
@@ -278,8 +310,8 @@ export function ModelSheet({
 
   const collected = useMemo(() => {
     if (!connection) return { changes: [], errors: {} };
-    return collectChanges(connection, texts, caps, acknowledged, lang);
-  }, [connection, texts, caps, acknowledged, lang]);
+    return collectChanges(connection, texts, caps, codex, acknowledged, lang, tr);
+  }, [connection, texts, caps, codex, acknowledged, lang, tr]);
 
   const resolvedFor = (model: Model): ResolvedModel => resolveModel(draft?.view ?? connection!, model);
 
@@ -490,6 +522,16 @@ export function ModelSheet({
     );
 
   const renderModel = (model: Model) => {
+    const savedCodex = connection.settings?.[model.id]?.codexReasoning;
+    const codexFields = codex[model.id] ?? {
+      model: savedCodex?.model ?? "",
+      efforts: savedCodex?.efforts?.join(", ") ?? "",
+    };
+    const setCodexField = (field: "model" | "efforts", value: string) =>
+      setCodex((current) => ({
+        ...current,
+        [model.id]: { ...(current[model.id] ?? codexFields), [field]: value },
+      }));
     const isSelected = selected.includes(model.id);
     const chat = isChatModel(model);
     const savedSelected = binding?.selected.includes(model.id) ?? false;
@@ -756,6 +798,33 @@ export function ModelSheet({
                 );
               })}
             </View>
+            {agent.id === "codex" && resolved.chat ? (
+              <View style={{ gap: 6 }}>
+                <TextField
+                  label={tr("Codex 捆绑模型 ID", "Bundled Codex model ID")}
+                  value={codexFields.model}
+                  onChangeText={(value) => setCodexField("model", value)}
+                  placeholder="gpt-6-luna"
+                  editable={!saving}
+                  testID={`ppm-codex-model-${model.id}`}
+                />
+                <TextField
+                  label={tr("允许的 Codex 推理强度", "Allowed Codex reasoning efforts")}
+                  value={codexFields.efforts}
+                  onChangeText={(value) => setCodexField("efforts", value)}
+                  placeholder="low, medium, high"
+                  error={collected.errors[`${model.id}${KEY_SEPARATOR}codexReasoning`]}
+                  editable={!saving}
+                  testID={`ppm-codex-efforts-${model.id}`}
+                />
+                <Text style={t.tiny}>
+                  {tr(
+                    "仅为网关别名填写捆绑模型 ID。推理强度留空时使用该捆绑模型的全部选项。选择「推理：否」可关闭。",
+                    "Enter a bundled model ID for a gateway alias. Leave efforts blank to use all bundled options. Set Reasoning to No to disable them.",
+                  )}
+                </Text>
+              </View>
+            ) : null}
             {probe && !probe.ok ? (
               <View style={[t.rowBetween, { gap: 8 }]}>
                 <Text style={{ color: theme.colors.statusDanger, fontSize: 11.5, lineHeight: 17, flex: 1 }}>

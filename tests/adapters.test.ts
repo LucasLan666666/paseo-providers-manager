@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildProvider } from "../server/adapters";
@@ -154,9 +154,15 @@ test("writes native configs and per-model limits", async () => {
       models,
       join(root, "opencode"),
     );
-    const opencodeConfig = JSON.parse(opencode.env.OPENCODE_CONFIG_CONTENT);
+    const opencodeConfig = JSON.parse(await readFile(opencode.env.PPM_OPENCODE_CONFIG, "utf8"));
     for (const name of ["XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "OPENCODE_CONFIG_DIR"])
       assert.equal(name in opencode.env, false, `${name} is left to the user's real setup`);
+    assert.ok(!JSON.stringify(opencode.env).includes("test-key"));
+    const keyPath = join(root, "opencode", "gateway.key");
+    assert.equal(opencodeConfig.provider.ppm.options.apiKey, `{file:${keyPath}}`);
+    assert.equal(await readFile(keyPath, "utf8"), "test-key");
+    assert.equal((await stat(keyPath)).mode & 0o777, 0o600);
+    assert.ok(!JSON.stringify(opencodeConfig).includes("test-key"));
     assert.equal(opencodeConfig.model, "ppm/model-a");
     assert.deepEqual(opencodeConfig.provider.ppm.models["model-a"].limit, {
       context: 64000,
@@ -299,6 +305,57 @@ test("Antigravity shares ~/.gemini except the gateway settings file", async () =
     assert.equal(JSON.parse(await readFile(settings, "utf8")).modelProvider, "gemini");
   } finally {
     process.env.HOME = realHome;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("OpenCode session-open selects the gateway configuration for each connection", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ppm-opencode-open-"));
+  try {
+    const profiles: Record<string, Awaited<ReturnType<typeof buildProvider>>> = {};
+    for (const id of ["a", "b"]) {
+      const profile = await buildProvider(
+        "opencode",
+        { ...connection("chat"), id, key: "fixture-" + id, url: `http://localhost/${id}/v1` },
+        models,
+        join(root, id),
+      );
+      profile.env.PPM_OWNER = "fixture";
+      profiles["ppm-opencode-" + id] = profile;
+    }
+
+    const { default: contribute } = await import("../index.server");
+    type Context = import("@getpaseo/plugin/server").PluginServerContext;
+    type Request = import("@getpaseo/plugin/server").PluginSessionOpenRequest;
+    type Hook = (input: { request: Request }, context: unknown) => Promise<Request | undefined>;
+    let open: Hook | undefined;
+    contribute({
+      addHook(name: string, handler: Hook) {
+        if (name === "agent.open.before") open = handler;
+      },
+      handle() {},
+    } as unknown as Context);
+    assert.ok(open);
+    const context = { paseo: { config: { get: async () => ({ config: { providers: profiles } }) } } };
+    const session: Request = {
+      provider: "opencode", agentId: "fixture", workspaceId: null, cwd: root,
+      reason: "create", purpose: "interactive", title: null, background: false,
+      labels: {}, metadata: {}, tools: [], mcpServers: {}, env: { EXISTING: "preserved" },
+    };
+    for (const reason of ["create", "resume", "refresh", "import"] as const) {
+      for (const id of ["a", "b"]) {
+        const request = { ...session, provider: "ppm-opencode-" + id, reason };
+        const result = await open({ request }, context);
+        assert.equal(result?.env.EXISTING, "preserved");
+        const config = JSON.parse(result!.env.OPENCODE_CONFIG_CONTENT);
+        assert.equal(config.model, "ppm/model-a");
+        assert.equal(config.provider.ppm.options.baseURL, `http://localhost/${id}/v1`);
+        assert.equal(config.provider.ppm.options.apiKey, `{file:${join(root, id, "gateway.key")}}`);
+        assert.ok(!JSON.stringify(result).includes("fixture-" + id));
+      }
+    }
+    assert.equal(await open({ request: session }, context), undefined);
+  } finally {
     await rm(root, { recursive: true, force: true });
   }
 });

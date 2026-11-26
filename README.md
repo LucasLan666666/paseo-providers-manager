@@ -61,9 +61,9 @@ Each agent uses an adapter tailored to how its CLI consumes custom gateways:
 | Agent | Supported Protocols | How Providers Manager Connects |
 | --- | --- | --- |
 | **Claude Code** | Anthropic Messages | Writes custom gateway env config; injects limits only for models Claude Code does not know or manual overrides. |
-| **Codex** | OpenAI Responses | Keeps Codex's built-in limits for known models; writes unknown same-family models and manual overrides into a generated model catalog. |
+| **Codex** | OpenAI Responses | Keeps Codex's built-in limits and reasoning efforts for exact bundled models; supports per-connection alias mapping, effort allowlists, and manual overrides in a generated model catalog. |
 | **GitHub Copilot** | Chat Completions, Responses, Anthropic Messages | Connects through the Copilot CLI's custom providers configuration file. |
-| **OpenCode** | Chat Completions, Responses, Anthropic Messages | Generates per-model context window, max output, and capability entries. |
+| **OpenCode** | Chat Completions, Responses, Anthropic Messages | Generates per-model limits and capabilities in private config/key files injected on session open so multiple gateways stay isolated. |
 | **Pi** | Chat Completions, Responses, Anthropic Messages | Generates per-model context window, max output, and capability entries. |
 | **Oh My Pi** | Chat Completions, Responses, Anthropic Messages | Generates per-model context window, max output, and capability entries. |
 | **Antigravity** | Gemini | Connects a Gemini-compatible gateway to native `agy` ACP sessions, mapping gateway models onto `agy`'s built-in model names (e.g. `gemini-4-argon`, `gemini-3.1-pro`, with optional `-low`/`-medium`/`-high`/`-xhigh`). |

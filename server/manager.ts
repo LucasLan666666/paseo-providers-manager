@@ -116,7 +116,8 @@ function applyChanges(conn: SavedConnection, changes: readonly SettingChange[]) 
       const field = change.field as "context" | "output";
       const automatic = model[field]?.value;
       row[field] = automatic === undefined ? { value: change.value } : { value: change.value, ack: automatic };
-    } else row[change.field as "reasoning" | "image" | "tools"] = change.value;
+    } else if (change.field === "codexReasoning") row.codexReasoning = change.value;
+    else if (typeof change.value === "boolean") row[change.field as "reasoning" | "image" | "tools"] = change.value;
     const settings = { ...(conn.settings ?? {}) };
     if (Object.keys(row).length) settings[model.id] = row;
     else delete settings[model.id];
@@ -351,7 +352,14 @@ export class Manager {
           const stale = next.connections.filter(
             (c) => !c.lastRefresh || Date.now() - c.lastRefresh >= DAY,
           );
-          if (!stale.length) return { message: L("目录已是最新", "Model lists are up to date") };
+          if (!stale.length) {
+            const patch = await preparePatch(this.storage.root, current, next, paseo);
+            if (!patch) return { message: L("目录已是最新", "Model lists are up to date") };
+            await this.storage.commit(next, patch, paseo);
+            this.committed = next;
+            await pruneGenerations(this.storage.root, paseo).catch(() => {});
+            return { message: L("已更新过期配置", "Updated outdated provider configs") };
+          }
           await Promise.all(stale.map((c) => refresh(c)));
           const failed = stale.filter((c) => c.error).length;
           message = L(`已检查 ${stale.length} 个连接，失败 ${failed} 个。`, `Checked ${count(stale.length, "connection", "connections")}, ${failed} failed.`);

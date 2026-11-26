@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import {
   anthropicBaseV1,
   assertModels,
@@ -5,6 +6,8 @@ import {
   modelChoices,
   openAiBase,
   requireLimits,
+  writePrivateJson,
+  writePrivateFile,
   type AdapterConnection,
   type AdapterModel,
   type BuiltProvider,
@@ -18,17 +21,11 @@ function packageFor(protocol: AdapterConnection["protocol"]): string {
   return "@ai-sdk/anthropic";
 }
 
-/**
- * OpenCode v1 configuration, passed only through OPENCODE_CONFIG_CONTENT (Paseo
- * merges its bridge plugin into it). OpenCode's own config, data, sessions and
- * logins stay the user's real ones; earlier versions pointed the XDG roots at
- * private per-generation directories, which hid all of that and lost history
- * on every change. Per-model limit.context and limit.output are native fields.
- */
+/** The session-open hook passes this private config to a dedicated helper. */
 export async function opencodeProvider(
   connection: AdapterConnection,
   models: readonly AdapterModel[],
-  _dir: string,
+  dir: string,
 ): Promise<BuiltProvider> {
   assertProtocol("OpenCode", connection.protocol, ["chat", "responses", "anthropic"]);
   assertModels(models);
@@ -37,6 +34,8 @@ export async function opencodeProvider(
     connection.protocol === "anthropic"
       ? anthropicBaseV1(connection.url)
       : openAiBase(connection.url);
+  const keyPath = join(dir, "gateway.key");
+  await writePrivateFile(keyPath, connection.key || "ppm-no-key");
   const config = {
     $schema: "https://opencode.ai/config.json",
     model: `${PROVIDER}/${models[0].id}`,
@@ -46,7 +45,7 @@ export async function opencodeProvider(
         name: connection.name || "PPM gateway",
         options: {
           baseURL,
-          apiKey: "{env:PPM_GATEWAY_KEY}",
+          apiKey: `{file:${keyPath}}`,
         },
         models: Object.fromEntries(
           limited.map((model) => [
@@ -64,13 +63,15 @@ export async function opencodeProvider(
       },
     },
   };
+  const path = join(dir, "opencode.json");
+  await writePrivateJson(path, config);
   return {
     extends: "opencode",
     env: {
-      OPENCODE_CONFIG_CONTENT: JSON.stringify(config),
-      // Always present so a removed key cannot survive a provider-env merge and
-      // an unauthenticated local gateway never receives an unrelated ambient key.
-      PPM_GATEWAY_KEY: connection.key || "ppm-no-key",
+      PPM_OPENCODE_CONFIG: path,
+      // Clear inline settings from older generations on Paseo's env deep merge.
+      OPENCODE_CONFIG_CONTENT: "",
+      PPM_GATEWAY_KEY: "",
     },
     models: modelChoices("opencode", models),
   };

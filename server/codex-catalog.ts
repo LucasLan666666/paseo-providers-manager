@@ -12,6 +12,8 @@ export interface CodexModelInfo {
   context_window?: number;
   max_context_window?: number;
   input_modalities?: string[];
+  default_reasoning_level?: string | null;
+  supported_reasoning_levels?: Array<{ effort: string; description?: string }>;
   [key: string]: unknown;
 }
 

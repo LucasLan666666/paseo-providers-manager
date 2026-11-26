@@ -559,3 +559,24 @@ test("real-request tests: request shape, error bodies, unknown ids and stale res
     await g.close();
   }
 });
+
+test("refreshStale regenerates outdated provider configs even when catalogs are fresh", async () => {
+  const g = await gateway(() => [{ id: "m1", context_length: 64000, max_output_tokens: 4096 }]);
+  try {
+    const connection = await g.save("chat", { url: `http://127.0.0.1:${g.port}/v1`, key: "test-key" });
+    await g.manager.action({ type: "selection", agent: "opencode", connection, selected: ["m1"] }, g.api);
+    const alias = "ppm-opencode-" + connection;
+    const env = () => (g.providers[alias] as { env: Record<string, string> }).env;
+    const firstGen = env().PPM_GENERATION;
+    const firstFp = env().PPM_FINGERPRINT;
+    // Simulate a deployed provider from an older generator version.
+    env().PPM_FINGERPRINT = "older-generator";
+    env().PPM_GATEWAY_KEY = "leaked-old-key";
+    await g.manager.action({ type: "refreshStale" }, g.api);
+    assert.notEqual(env().PPM_GENERATION, firstGen);
+    assert.equal(env().PPM_FINGERPRINT, firstFp);
+    assert.equal(env().PPM_GATEWAY_KEY, "");
+  } finally {
+    await g.close();
+  }
+});

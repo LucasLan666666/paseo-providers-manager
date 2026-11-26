@@ -1,6 +1,6 @@
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { homedir } from "node:os";
-import { stat } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { join, isAbsolute } from "node:path";
 import { Jobs } from "./server/jobs";
 import { Manager } from "./server/manager";
@@ -68,6 +68,34 @@ export default function contribute(server: PluginServerContext) {
     join(home, "plugin-data", "paseo-providers-manager"),
   );
   const jobs = new Jobs();
+  server.addHook("agent.open.before", async ({ request }, { paseo }) => {
+    if (!request.provider.startsWith("ppm-opencode-")) return;
+    const { config } = await paseo.config.get();
+    const profile = config.providers[request.provider];
+    const env = profile?.env as Record<string, string> | undefined;
+    if (profile?.extends !== "opencode" || !env?.PPM_OWNER) return;
+    if (env.PPM_OPENCODE_CONFIG) {
+      return {
+        ...request,
+        env: {
+          ...request.env,
+          OPENCODE_CONFIG_CONTENT: await readFile(env.PPM_OPENCODE_CONFIG, "utf8"),
+        },
+      };
+    }
+    // Connections created before the private-file migration can open immediately.
+    if (env.OPENCODE_CONFIG_CONTENT) {
+      return {
+        ...request,
+        env: {
+          ...request.env,
+          OPENCODE_CONFIG_CONTENT: env.OPENCODE_CONFIG_CONTENT,
+          PPM_GATEWAY_KEY: env.PPM_GATEWAY_KEY || "ppm-no-key",
+        },
+      };
+    }
+    throw new Error(L("缺少 OpenCode 连接配置。", "Missing OpenCode connection configuration."));
+  });
   // Every handler runs in the language the client asked for (server/i18n.ts).
   server.handle(jobRpc, ({ job, lang }) => withLang(lang, () => jobs.wait(job)));
   server.handle(snapshotRpc, ({ lang }, { paseo }) =>

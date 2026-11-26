@@ -178,6 +178,10 @@ export function resolvedModels(state: State, binding: Binding) {
       outputSource: resolved.output.source,
       caps: resolved.caps,
       chat: resolved.chat,
+      ...(binding.agent === "codex" ? {
+        reasoningOverride: resolved.capsManual.reasoning,
+        codexReasoning: connection.settings?.[id]?.codexReasoning,
+      } : {}),
     };
   });
 }

@@ -61,9 +61,9 @@ flowchart LR
 | Agent | 支持协议 | 接入方式 |
 | --- | --- | --- |
 | **Claude Code** | Anthropic Messages | 写入网关启动配置；仅对 Claude Code 内置表不认识的模型或手动覆盖项写入容量上限。 |
-| **Codex** | OpenAI Responses | 内置表已有模型保留 Codex 自带上限；未知同系列模型与手动值写入生成的模型目录。 |
+| **Codex** | OpenAI Responses | 精确匹配的内置模型保留 Codex 自带上限与推理强度档位；支持按连接配置别名映射、允许档位与手动覆盖并写入生成的模型目录。 |
 | **GitHub Copilot** | Chat Completions、Responses、Anthropic Messages | 通过 Copilot CLI 的自定义提供商（providers）配置文件接入网关。 |
-| **OpenCode** | Chat Completions、Responses、Anthropic Messages | 逐模型写入上下文窗口、最大输出与能力标记。 |
+| **OpenCode** | Chat Completions、Responses、Anthropic Messages | 逐模型写入上限与能力标记至私有配置与密钥文件，并在会话打开时按连接注入以隔离多网关。 |
 | **Pi** | Chat Completions、Responses、Anthropic Messages | 逐模型写入上下文窗口、最大输出与能力标记。 |
 | **Oh My Pi** | Chat Completions、Responses、Anthropic Messages | 逐模型写入上下文窗口、最大输出与能力标记。 |
 | **Antigravity** | Gemini | 通过原生 `agy` ACP 会话接入 Gemini 兼容网关，并将网关模型映射到 `agy` 内置模型名（如 `gemini-4-argon`、`gemini-3.1-pro`，可选 `-low`/`-medium`/`-high`/`-xhigh`）。 |
