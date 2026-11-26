@@ -4,6 +4,7 @@ import {
   copyText,
   Icon,
   Modal,
+  ScrollView as HostScrollView,
   TextInput as HostTextInput,
   useToast,
 } from "@getpaseo/plugin/client/ui";
@@ -12,7 +13,6 @@ import { type ReactNode, useMemo, useState } from "react";
 import {
   Platform,
   Pressable,
-  ScrollView,
   type StyleProp,
   Text,
   type TextStyle,
@@ -834,22 +834,26 @@ export function Sheet({
         {/* Host modals mount their content in a separate root, so the screen's
             provider cannot be assumed. Re-provide theme/layout for body and footer. */}
         <UiProvider theme={theme} compact={compact} lang={lang}>
+          {/* The host bounds the body (mobile: the bottom sheet's snap height;
+              desktop: 85% of the window), so fill it and keep the footer pinned.
+              The host ScrollView is required inside a mobile sheet: a plain React
+              Native ScrollView loses every vertical drag to the sheet's own pan. */}
           <View
             testID={testID}
             style={{
-              maxHeight: compact ? 430 : 590,
-              minHeight: 180,
+              flex: 1,
+              minHeight: 0,
               backgroundColor: theme.colors.surface0,
             }}
           >
-            <ScrollView
-              style={{ flexShrink: 1 }}
+            <HostScrollView
+              style={{ flex: 1, minHeight: 0 }}
               contentContainerStyle={{ padding: compact ? 16 : 20, gap: 12 }}
               showsVerticalScrollIndicator={false}
               keyboardShouldPersistTaps="handled"
             >
               {children}
-            </ScrollView>
+            </HostScrollView>
             {footer ? (
               <View
                 style={{

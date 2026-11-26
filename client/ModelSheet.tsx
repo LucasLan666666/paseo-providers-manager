@@ -793,7 +793,8 @@ export function ModelSheet({
         testID="ppm-model-sheet"
         footer={
           <>
-            <View style={{ flex: 1, minWidth: 140 }}>
+            {/* Narrow screens: the summary takes its own row so the buttons stay together. */}
+            <View style={compact ? { flexBasis: "100%" } : { flex: 1, minWidth: 140 }}>
               <Text style={t.small}>
                 {tr(`已选 ${existingSelected} / ${allModels.length} 个模型`, `${existingSelected} / ${count(allModels.length, "model", "models")} selected`)}
                 {conflictCount ? tr(` · ${conflictCount} 个冲突`, ` · ${count(conflictCount, "conflict", "conflicts")}`) : ""}
