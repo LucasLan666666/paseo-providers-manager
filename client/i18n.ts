@@ -22,6 +22,8 @@ export function useLanguage(): {
   lang: Lang;
   choice: LanguageChoice;
   appLocale: string;
+  /** False while the device setting is still being read (a different language may follow). */
+  ready: boolean;
   settings: ReturnType<typeof useSettings<typeof languageSettings.schema>>;
 } {
   const settings = useSettings(languageSettings);
@@ -31,5 +33,11 @@ export function useLanguage(): {
   useEffect(() => {
     if (settings.status === "ready") lastChoice = settings.values.language;
   }, [settings]);
-  return { lang: resolveLang(choice, appLocale), choice, appLocale, settings };
+  return {
+    lang: resolveLang(choice, appLocale),
+    choice,
+    appLocale,
+    ready: settings.status !== "loading",
+    settings,
+  };
 }

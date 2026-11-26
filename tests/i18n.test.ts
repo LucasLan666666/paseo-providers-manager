@@ -1,4 +1,5 @@
 import test from "node:test";
+import { once } from "node:events";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -93,4 +94,72 @@ test("client formatting helpers are translated", () => {
   assert.equal(parseTokens("128k", "en").value, 128000);
   assert.equal(protocolEndpoint("responses", "en"), "POST {base}/responses");
   assert.equal(protocolEndpoint("responses", "zh-CN"), "POST {地址}/responses");
+});
+
+test("action RPC input: the language is optional, validated and stripped of nothing else", async () => {
+  const { actionRpc } = await import("../shared/contracts");
+  const id = "00000000-0000-4000-8000-000000000000";
+  assert.deepEqual(await actionRpc.input.parseAsync({ type: "testConnection", connection: id }), {
+    type: "testConnection",
+    connection: id,
+  });
+  assert.equal((await actionRpc.input.parseAsync({ type: "markSeen", connection: id, lang: "en" })).lang, "en");
+  await assert.rejects(actionRpc.input.parseAsync({ type: "markSeen", connection: id, lang: "fr" }));
+  await assert.rejects(actionRpc.input.parseAsync({ type: "markSeen" }));
+});
+
+test("actions queued behind each other keep their own language", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ppm-i18n-"));
+  const api = { config: { get: async () => ({ config: { providers: {} } }), patch: async () => {} } } as unknown as PaseoApi;
+  try {
+    const manager = new Manager(root);
+    const missing = "00000000-0000-4000-8000-000000000000";
+    const [zh, en, none] = await Promise.allSettled([
+      withLang("zh-CN", () => manager.action({ type: "markSeen", connection: missing }, api)),
+      withLang("en", () => manager.action({ type: "markSeen", connection: missing }, api)),
+      manager.action({ type: "markSeen", connection: missing }, api),
+    ]);
+    assert.match(String((zh as PromiseRejectedResult).reason), /找不到连接/);
+    assert.match(String((en as PromiseRejectedResult).reason), /Connection not found/);
+    assert.match(String((none as PromiseRejectedResult).reason), /找不到连接/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a stored gateway error is shown in the reader's language", async () => {
+  const { createServer } = await import("node:http");
+  const server = createServer((_req, res) => {
+    res.writeHead(401, { "content-type": "application/json" });
+    res.end("{}");
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const port = (server.address() as { port: number }).port;
+  const root = await mkdtemp(join(tmpdir(), "ppm-i18n-"));
+  const api = { config: { get: async () => ({ config: { providers: {} } }), patch: async () => {} } } as unknown as PaseoApi;
+  const realFetch = globalThis.fetch;
+  // Offline: only the local gateway is reachable.
+  globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+    const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
+    if (url.hostname === "127.0.0.1") return realFetch(input, init);
+    throw new Error("offline");
+  }) as typeof fetch;
+  try {
+    const manager = new Manager(root);
+    await withLang("zh-CN", () =>
+      manager.action(
+        { type: "saveConnection", name: "Relay", url: `http://127.0.0.1:${port}/v1`, protocol: "chat", key: "sk-test-1234567890", catalogProvider: "" },
+        api,
+      ),
+    );
+    const zh = await withLang("zh-CN", () => manager.snapshot(api));
+    const en = await withLang("en", () => manager.snapshot(api));
+    assert.match(zh.connections[0].error ?? "", /网关拒绝了 API Key/);
+    assert.match(en.connections[0].error ?? "", /The gateway rejected the API key/);
+  } finally {
+    globalThis.fetch = realFetch;
+    server.close();
+    await rm(root, { recursive: true, force: true });
+  }
 });

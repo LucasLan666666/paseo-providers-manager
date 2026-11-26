@@ -50,15 +50,21 @@ export type CatalogErrorCode =
  * An expected discovery failure. Messages are deliberately free of URLs,
  * response bodies, and credentials so callers can display them verbatim.
  */
+/** A message in both languages; CatalogError picks the current one and keeps both. */
+const T = (zh: string, en: string): [zh: string, en: string] => [zh, en];
+
 export class CatalogError extends Error {
   readonly code: CatalogErrorCode;
   readonly status: number | undefined;
+  /** Both languages, so a stored error can be shown in the reader's language. */
+  readonly texts: { zh: string; en: string };
 
-  constructor(code: CatalogErrorCode, message: string, status?: number) {
-    super(message);
+  constructor(code: CatalogErrorCode, text: [zh: string, en: string], status?: number) {
+    super(L(text[0], text[1]));
     this.name = "CatalogError";
     this.code = code;
     this.status = status;
+    this.texts = { zh: text[0], en: text[1] };
   }
 }
 
@@ -146,7 +152,7 @@ export async function discover(
   options: DiscoverOptions = {},
 ): Promise<Model[]> {
   if (connection === null || typeof connection !== "object") {
-    throw new CatalogError("invalid-connection", L("缺少网关连接信息。", "Missing gateway connection details."));
+    throw new CatalogError("invalid-connection", T("缺少网关连接信息。", "Missing gateway connection details."));
   }
 
   const protocol = assertProtocol(connection.protocol);
@@ -157,7 +163,7 @@ export async function discover(
   const fetchImpl = options.fetch ?? globalThis.fetch;
 
   if (typeof fetchImpl !== "function") {
-    throw new CatalogError("network", L("当前运行环境不支持网络请求。", "This runtime cannot make network requests."));
+    throw new CatalogError("network", T("当前运行环境不支持网络请求。", "This runtime cannot make network requests."));
   }
 
   const models = await collectModels(
@@ -182,7 +188,7 @@ export async function discover(
 
 function assertProtocol(raw: unknown): Protocol {
   if (typeof raw !== "string" || !PROTOCOLS.includes(raw as Protocol)) {
-    throw new CatalogError("invalid-connection", L("不支持的网关协议。", "Unsupported gateway protocol."));
+    throw new CatalogError("invalid-connection", T("不支持的网关协议。", "Unsupported gateway protocol."));
   }
   return raw as Protocol;
 }
@@ -190,14 +196,14 @@ function assertProtocol(raw: unknown): Protocol {
 function sanitizeKey(raw: unknown): string {
   if (typeof raw !== "string" || raw === "") return "";
   if (/[\u0000\r\n]/.test(raw)) {
-    throw new CatalogError("invalid-connection", L("API Key 包含无效字符。", "The API key contains invalid characters."));
+    throw new CatalogError("invalid-connection", T("API Key 包含无效字符。", "The API key contains invalid characters."));
   }
   return raw;
 }
 
 function normalizeBaseUrl(raw: unknown): URL {
   if (typeof raw !== "string" || raw.trim() === "") {
-    throw new CatalogError("invalid-url", L("请填写网关地址。", "Enter the gateway URL."));
+    throw new CatalogError("invalid-url", T("请填写网关地址。", "Enter the gateway URL."));
   }
 
   let value = raw.trim();
@@ -210,14 +216,14 @@ function normalizeBaseUrl(raw: unknown): URL {
   try {
     url = new URL(value);
   } catch {
-    throw new CatalogError("invalid-url", L("网关地址无效。", "Invalid gateway URL."));
+    throw new CatalogError("invalid-url", T("网关地址无效。", "Invalid gateway URL."));
   }
 
   if (url.protocol !== "http:" && url.protocol !== "https:") {
-    throw new CatalogError("invalid-url", L("网关地址必须使用 HTTP 或 HTTPS。", "The gateway URL must use HTTP or HTTPS."));
+    throw new CatalogError("invalid-url", T("网关地址必须使用 HTTP 或 HTTPS。", "The gateway URL must use HTTP or HTTPS."));
   }
   if (url.username !== "" || url.password !== "") {
-    throw new CatalogError("invalid-url", L("网关地址不能包含用户名或密码。", "The gateway URL cannot contain a username or password."));
+    throw new CatalogError("invalid-url", T("网关地址不能包含用户名或密码。", "The gateway URL cannot contain a username or password."));
   }
 
   url.hash = "";
@@ -311,10 +317,10 @@ async function collectModels(
 
   while (url !== undefined) {
     if (pages >= maxPages) {
-      throw new CatalogError("pagination", L("网关返回了过多分页。", "The gateway returned too many pages."));
+      throw new CatalogError("pagination", T("网关返回了过多分页。", "The gateway returned too many pages."));
     }
     if (visited.has(url.href)) {
-      throw new CatalogError("pagination", L("网关返回了重复的分页游标。", "The gateway repeated a pagination cursor."));
+      throw new CatalogError("pagination", T("网关返回了重复的分页游标。", "The gateway repeated a pagination cursor."));
     }
     visited.add(url.href);
 
@@ -326,7 +332,7 @@ async function collectModels(
       seenIds.add(model.id);
       models.push(model);
       if (models.length > maxModels) {
-        throw new CatalogError("pagination", L("网关返回了过多模型。", "The gateway returned too many models."));
+        throw new CatalogError("pagination", T("网关返回了过多模型。", "The gateway returned too many models."));
       }
     }
 
@@ -376,7 +382,7 @@ function extractItems(protocol: Protocol, payload: unknown): unknown[] {
 }
 
 function malformedModelList(): CatalogError {
-  return new CatalogError("invalid-response", L("网关返回的模型列表格式不正确。", "The gateway's model list is malformed."));
+  return new CatalogError("invalid-response", T("网关返回的模型列表格式不正确。", "The gateway's model list is malformed."));
 }
 
 function toModel(item: unknown, protocol: Protocol): Model {
@@ -408,7 +414,7 @@ function toModel(item: unknown, protocol: Protocol): Model {
 }
 
 function malformedModelEntry(): CatalogError {
-  return new CatalogError("invalid-response", L("网关返回的模型条目格式不正确。", "The gateway returned a malformed model entry."));
+  return new CatalogError("invalid-response", T("网关返回的模型条目格式不正确。", "The gateway returned a malformed model entry."));
 }
 
 function normalizeId(value: string, protocol: Protocol): string | undefined {
@@ -484,7 +490,7 @@ function nextPageUrl(
 function cursorPage(payload: Record<string, unknown>, current: URL): URL {
   const last = readString(payload.last_id) ?? readString(payload.lastId);
   if (last === undefined) {
-    throw new CatalogError("pagination", L("网关未返回分页游标。", "The gateway did not return a pagination cursor."));
+    throw new CatalogError("pagination", T("网关未返回分页游标。", "The gateway did not return a pagination cursor."));
   }
   return withCursor(current, "after_id", last);
 }
@@ -528,17 +534,17 @@ function sameOriginUrl(value: string, current: URL): URL {
   try {
     target = new URL(value, current);
   } catch {
-    throw new CatalogError("pagination", L("网关返回了无效的分页链接。", "The gateway returned an invalid pagination link."));
+    throw new CatalogError("pagination", T("网关返回了无效的分页链接。", "The gateway returned an invalid pagination link."));
   }
 
   if (target.protocol !== "http:" && target.protocol !== "https:") {
-    throw new CatalogError("pagination", L("网关返回了无效的分页链接。", "The gateway returned an invalid pagination link."));
+    throw new CatalogError("pagination", T("网关返回了无效的分页链接。", "The gateway returned an invalid pagination link."));
   }
   if (target.username !== "" || target.password !== "") {
-    throw new CatalogError("pagination", L("网关返回了无效的分页链接。", "The gateway returned an invalid pagination link."));
+    throw new CatalogError("pagination", T("网关返回了无效的分页链接。", "The gateway returned an invalid pagination link."));
   }
   if (target.origin !== current.origin) {
-    throw new CatalogError("pagination", L("网关返回了跨域分页链接，已停止请求以保护密钥。", "The gateway returned a cross-origin pagination link; stopped to protect the key."));
+    throw new CatalogError("pagination", T("网关返回了跨域分页链接，已停止请求以保护密钥。", "The gateway returned a cross-origin pagination link; stopped to protect the key."));
   }
 
   target.hash = "";
@@ -553,7 +559,7 @@ async function requestJson(
   timeoutMs: number,
 ): Promise<unknown> {
   if (url.origin !== allowedOrigin) {
-    throw new CatalogError("pagination", L("网关返回了跨域分页链接，已停止请求以保护密钥。", "The gateway returned a cross-origin pagination link; stopped to protect the key."));
+    throw new CatalogError("pagination", T("网关返回了跨域分页链接，已停止请求以保护密钥。", "The gateway returned a cross-origin pagination link; stopped to protect the key."));
   }
 
   let response: Response;
@@ -572,23 +578,23 @@ async function requestJson(
 
   const contentLength = response.headers.get("content-length");
   if (contentLength !== null && Number(contentLength) > MAX_RESPONSE_CHARS) {
-    throw new CatalogError("invalid-response", L("网关响应过大。", "The gateway response is too large."));
+    throw new CatalogError("invalid-response", T("网关响应过大。", "The gateway response is too large."));
   }
 
   let text: string;
   try {
     text = await response.text();
   } catch {
-    throw new CatalogError("invalid-response", L("无法读取网关响应。", "Cannot read the gateway response."));
+    throw new CatalogError("invalid-response", T("无法读取网关响应。", "Cannot read the gateway response."));
   }
   if (text.length > MAX_RESPONSE_CHARS) {
-    throw new CatalogError("invalid-response", L("网关响应过大。", "The gateway response is too large."));
+    throw new CatalogError("invalid-response", T("网关响应过大。", "The gateway response is too large."));
   }
 
   try {
     return JSON.parse(text) as unknown;
   } catch {
-    throw new CatalogError("invalid-response", L("网关返回了无法解析的响应。", "The gateway returned an unparsable response."));
+    throw new CatalogError("invalid-response", T("网关返回了无法解析的响应。", "The gateway returned an unparsable response."));
   }
 }
 
@@ -610,25 +616,25 @@ function networkError(error: unknown): CatalogError {
       ? (error as { name?: unknown }).name
       : undefined;
   if (name === "TimeoutError" || name === "AbortError") {
-    return new CatalogError("network", L("网关请求超时。", "The gateway request timed out."));
+    return new CatalogError("network", T("网关请求超时。", "The gateway request timed out."));
   }
-  return new CatalogError("network", L("无法连接网关，请检查地址和网络。", "Cannot reach the gateway. Check the URL and network."));
+  return new CatalogError("network", T("无法连接网关，请检查地址和网络。", "Cannot reach the gateway. Check the URL and network."));
 }
 
 function responseError(status: number): CatalogError {
   if (status === 401 || status === 403) {
-    return new CatalogError("auth", L("网关拒绝了 API Key，请检查密钥和权限。", "The gateway rejected the API key. Check the key and its permissions."), status);
+    return new CatalogError("auth", T("网关拒绝了 API Key，请检查密钥和权限。", "The gateway rejected the API key. Check the key and its permissions."), status);
   }
   if (status === 404) {
-    return new CatalogError("http", L("找不到网关的模型列表接口。", "The gateway has no model list endpoint."), status);
+    return new CatalogError("http", T("找不到网关的模型列表接口。", "The gateway has no model list endpoint."), status);
   }
   if (status === 429) {
-    return new CatalogError("http", L("网关请求过于频繁，请稍后再试。", "Too many requests to the gateway. Try again later."), status);
+    return new CatalogError("http", T("网关请求过于频繁，请稍后再试。", "Too many requests to the gateway. Try again later."), status);
   }
   if (status >= 500) {
-    return new CatalogError("http", L("网关暂时不可用。", "The gateway is temporarily unavailable."), status);
+    return new CatalogError("http", T("网关暂时不可用。", "The gateway is temporarily unavailable."), status);
   }
-  return new CatalogError("http", L(`网关返回 HTTP ${status}。`, `The gateway returned HTTP ${status}.`), status);
+  return new CatalogError("http", T(`网关返回 HTTP ${status}。`, `The gateway returned HTTP ${status}.`), status);
 }
 
 // ---------------------------------------------------------------------------
@@ -666,13 +672,13 @@ async function loadModelsDev(
   try {
     url = new URL(rawUrl);
   } catch {
-    throw new CatalogError("invalid-url", L("模型目录地址无效。", "Invalid model catalog URL."));
+    throw new CatalogError("invalid-url", T("模型目录地址无效。", "Invalid model catalog URL."));
   }
   if (url.protocol !== "http:" && url.protocol !== "https:") {
-    throw new CatalogError("invalid-url", L("模型目录地址必须使用 HTTP 或 HTTPS。", "The model catalog URL must use HTTP or HTTPS."));
+    throw new CatalogError("invalid-url", T("模型目录地址必须使用 HTTP 或 HTTPS。", "The model catalog URL must use HTTP or HTTPS."));
   }
   if (url.username !== "" || url.password !== "") {
-    throw new CatalogError("invalid-url", L("模型目录地址不能包含用户名或密码。", "The model catalog URL cannot contain a username or password."));
+    throw new CatalogError("invalid-url", T("模型目录地址不能包含用户名或密码。", "The model catalog URL cannot contain a username or password."));
   }
   url.hash = "";
 

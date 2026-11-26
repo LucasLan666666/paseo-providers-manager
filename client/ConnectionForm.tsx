@@ -10,7 +10,7 @@ import {
   type Protocol,
 } from "../shared/contracts";
 import type { AgentDescriptor } from "./derive";
-import { protocolDescription, protocolFullLabel } from "./format";
+import { count, protocolDescription, protocolFullLabel } from "./format";
 import type { FormPreset } from "./screenState";
 import type { RunOptions } from "./useManager";
 import {
@@ -325,7 +325,7 @@ export function ConnectionForm({
         >
           {tr(
             `${inUse.map((binding) => `${agentLabel(binding.agent)}（${binding.selected.length} 个模型）`).join("、")} 正在使用这个连接。要更换协议，请先在这些 Agent 中停用它的模型；如果网关同时提供其他协议，可以复制一个新连接。`,
-            `${inUse.map((binding) => `${agentLabel(binding.agent)} (${binding.selected.length} models)`).join(", ")} use this connection. To change the protocol, turn off its models in those agents first; if the gateway also serves another protocol, copy the connection instead.`,
+            `${inUse.map((binding) => `${agentLabel(binding.agent)} (${count(binding.selected.length, "model", "models")})`).join(", ")} use this connection. To change the protocol, turn off its models in those agents first; if the gateway also serves another protocol, copy the connection instead.`,
           )}
         </Notice>
       ) : null}

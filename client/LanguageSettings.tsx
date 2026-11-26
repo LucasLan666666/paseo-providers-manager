@@ -17,7 +17,7 @@ export function LanguageSettingsScreen(_props: PluginSurfaceProps) {
   const value: LanguageChoice = settings.status === "ready" ? settings.values.language : "system";
   const followed = resolveLang("system", appLocale) === "zh-CN" ? "简体中文" : "English";
   const options: Array<{ value: LanguageChoice; label: string }> = [
-    { value: "system", label: `${pick(lang, "跟随 Paseo", "Follow Paseo")}（${followed}）` },
+    { value: "system", label: pick(lang, `跟随 Paseo（${followed}）`, `Follow Paseo (${followed})`) },
     { value: "zh-CN", label: "简体中文" },
     { value: "en", label: "English" },
   ];

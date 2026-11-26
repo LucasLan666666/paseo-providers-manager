@@ -16,6 +16,7 @@ import {
   type AgentDescriptor,
 } from "./derive";
 import {
+  count,
   formatRelativeTime,
   formatTokens,
   protocolDescription,
@@ -185,7 +186,7 @@ export function BoundConnectionCard({
       {missingCount ? (
         <Notice
           tone="warning"
-          title={tr(`${missingCount} 个已选模型缺失`, `${missingCount} selected models are missing`)}
+          title={tr(`${missingCount} 个已选模型缺失`, `Selected models missing: ${missingCount}`)}
           action={
             <Btn label={tr("处理", "Fix")} size="sm" variant="ghost" onPress={onManage} />
           }
@@ -193,14 +194,14 @@ export function BoundConnectionCard({
           {missing.length
             ? tr(
                 `${missing.length} 个模型已不在保存的目录中，保存选择前需要移除。`,
-                `${missing.length} models are no longer in the saved list and must be removed before saving.`,
+                `No longer in the saved list (remove before saving): ${count(missing.length, "model", "models")}.`,
               )
             : ""}
           {unlisted.length
             ? (missing.length ? " " : "") +
               tr(
                 `${unlisted.length} 个模型仍在本地目录中，但网关已不再列出它们；可继续使用已保存的参数或移除。`,
-                `${unlisted.length} models are still saved locally but the gateway no longer lists them; keep using the saved values or remove them.`,
+                `Saved locally but no longer listed by the gateway: ${count(unlisted.length, "model", "models")}; keep using the saved values or remove them.`,
               )
             : ""}
         </Notice>
@@ -222,7 +223,7 @@ export function BoundConnectionCard({
       {pending.length ? (
         <Notice
           tone="warning"
-          title={tr(`${pending.length} 个已选模型有待确认的推荐值`, `${pending.length} selected models have suggested values to confirm`)}
+          title={tr(`${pending.length} 个已选模型有待确认的推荐值`, `Suggested values to confirm: ${count(pending.length, "selected model", "selected models")}`)}
           action={<Btn label={tr("查看", "Review")} size="sm" variant="ghost" onPress={onManage} />}
         >
           {tr(
@@ -235,7 +236,7 @@ export function BoundConnectionCard({
       {nonChat.length ? (
         <Notice
           tone="warning"
-          title={tr(`已选 ${nonChat.length} 个非对话模型`, `${nonChat.length} selected models cannot chat`)}
+          title={tr(`已选 ${nonChat.length} 个非对话模型`, `Selected but cannot chat: ${count(nonChat.length, "model", "models")}`)}
           action={<Btn label={tr("处理", "Fix")} size="sm" variant="ghost" onPress={onManage} />}
         >
           {tr(
@@ -248,7 +249,7 @@ export function BoundConnectionCard({
       {fresh.length ? (
         <Notice
           tone="accent"
-          title={tr(`网关新增 ${fresh.length} 个模型`, `The gateway added ${fresh.length} models`)}
+          title={tr(`网关新增 ${fresh.length} 个模型`, `The gateway added ${count(fresh.length, "model", "models")}`)}
           action={<Btn label={tr("查看", "Review")} size="sm" variant="ghost" onPress={onManage} />}
         >
           {tr(
@@ -298,7 +299,7 @@ export function BoundConnectionCard({
           <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
             <Icon name="TriangleAlert" size={13} color={theme.colors.statusWarning} />
             <Text style={[t.tiny, { color: theme.colors.statusWarning }]}>
-              {tr(`${missingCount} 个模型缺失`, `${missingCount} models missing`)}
+              {tr(`${missingCount} 个模型缺失`, `Missing: ${count(missingCount, "model", "models")}`)}
               {missing.length ? `${tr("：", ": ")}${missing.slice(0, 3).join(", ")}${missing.length > 3 ? "…" : ""}` : ""}
               {unlisted.length
                 ? `${missing.length ? tr("；", "; ") : tr("：", ": ")}${unlisted.slice(0, 3).map((model) => model.label || model.id).join(", ")}${unlisted.length > 3 ? "…" : ""}`
@@ -441,7 +442,7 @@ export function AvailableConnectionRow({
           {!connection.hasKey ? <Badge tone="warning" label={tr("无密钥", "No key")} /> : null}
         </View>
         <Text style={t.tiny} numberOfLines={1}>
-          {tr(`${connection.models.length} 个模型`, `${connection.models.length} models`)}
+          {tr(`${connection.models.length} 个模型`, count(connection.models.length, "model", "models"))}
           {connection.catalogProvider ? tr(` · 目录 ${connection.catalogProvider}`, ` · catalog ${connection.catalogProvider}`) : ""}
           {` · ${formatRelativeTime(connection.lastRefresh, lang)}`}
         </Text>

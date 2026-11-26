@@ -26,6 +26,7 @@ import {
 } from "../shared/limits";
 import { conflictsFor, modelById, type AgentDescriptor } from "./derive";
 import {
+  count,
   formatTokens,
   formatTokensFull,
   parseTokens,
@@ -550,7 +551,7 @@ export function ModelSheet({
                 {chat && resolved.pending ? <Badge tone="warning" label={tr("待确认", "To confirm")} /> : null}
                 {isSelected && !savedSelected ? <Badge label={tr("待保存", "Unsaved")} /> : null}
                 {modelConflicts.length > 0 ? (
-                  <Badge tone="warning" label={tr(`${modelConflicts.length} 个冲突`, `${modelConflicts.length} conflicts`)} icon="AlertTriangle" />
+                  <Badge tone="warning" label={tr(`${modelConflicts.length} 个冲突`, count(modelConflicts.length, "conflict", "conflicts"))} icon="AlertTriangle" />
                 ) : null}
                 {probe ? (
                   <Badge
@@ -759,7 +760,11 @@ export function ModelSheet({
               <View style={[t.rowBetween, { gap: 8 }]}>
                 <Text style={{ color: theme.colors.statusDanger, fontSize: 11.5, lineHeight: 17, flex: 1 }}>
                   {tr("测试失败：", "Test failed: ")}
-                  {probe.error ?? tr("未知错误", "unknown error")}
+                  {probe.kind === "timeout"
+                    ? tr("请求超时", "request timed out")
+                    : probe.kind === "unreachable"
+                      ? tr("无法连接网关：", "cannot reach the gateway: ") + (probe.error ?? "")
+                      : (probe.error ?? tr("未知错误", "unknown error"))}
                 </Text>
                 <Btn label={tr("重测", "Retest")} size="sm" variant="ghost" onPress={() => probeNow([model.id])} pending={probing} />
               </View>
@@ -790,8 +795,8 @@ export function ModelSheet({
           <>
             <View style={{ flex: 1, minWidth: 140 }}>
               <Text style={t.small}>
-                {tr(`已选 ${existingSelected} / ${allModels.length} 个模型`, `${existingSelected} / ${allModels.length} models selected`)}
-                {conflictCount ? tr(` · ${conflictCount} 个冲突`, ` · ${conflictCount} conflicts`) : ""}
+                {tr(`已选 ${existingSelected} / ${allModels.length} 个模型`, `${existingSelected} / ${count(allModels.length, "model", "models")} selected`)}
+                {conflictCount ? tr(` · ${conflictCount} 个冲突`, ` · ${count(conflictCount, "conflict", "conflicts")}`) : ""}
                 {missing.length + unlisted.length
                   ? tr(` · ${missing.length + unlisted.length} 个缺失`, ` · ${missing.length + unlisted.length} missing`)
                   : ""}
@@ -802,7 +807,7 @@ export function ModelSheet({
                     ? tr("请修正兜底值", "Fix the fallback values")
                     : tr(
                         `请修正 ${new Set(errorModels).size} 个模型的上限值（见“待处理”）`,
-                        `Fix the limits of ${new Set(errorModels).size} models (see “To review”)`,
+                        `Fix the limits of ${count(new Set(errorModels).size, "model", "models")} (see “To review”)`,
                       )}
                 </Text>
               ) : selected.length === 0 ? (
@@ -909,7 +914,7 @@ export function ModelSheet({
         {pending.length ? (
           <Notice
             tone="warning"
-            title={tr(`${pending.length} 个模型有待确认的推荐值`, `${pending.length} models have suggested values to confirm`)}
+            title={tr(`${pending.length} 个模型有待确认的推荐值`, `Suggested values to confirm: ${count(pending.length, "model", "models")}`)}
             action={
               <Btn
                 label={tr("全部采用推荐值", "Adopt all suggestions")}
@@ -930,7 +935,7 @@ export function ModelSheet({
         {nonChat.length ? (
           <Notice
             tone="warning"
-            title={tr(`已选 ${nonChat.length} 个非对话模型`, `${nonChat.length} selected models cannot chat`)}
+            title={tr(`已选 ${nonChat.length} 个非对话模型`, `Selected but cannot chat: ${count(nonChat.length, "model", "models")}`)}
             action={
               <Btn
                 label={tr("全部移除", "Remove all")}

@@ -1,7 +1,6 @@
 import type { Probe } from "../shared/contracts";
 import { anthropicBase, geminiBase, openAiBase } from "./adapter-common";
 import type { SavedConnection } from "./state";
-import { L } from "./i18n";
 
 const TIMEOUT_MS = 60_000;
 const CONCURRENCY = 4;
@@ -110,14 +109,15 @@ async function probeOne(
     // Some relays answer 200 with an error object instead of a model reply.
     const failed = !response.ok || hasErrorBody(body);
     if (!failed) return { ok: true, ms, at: Date.now() };
-    return { ok: false, ms, error: redact(errorText(response.status, body)), at: Date.now() };
+    return { ok: false, ms, kind: "http", error: redact(errorText(response.status, body)), at: Date.now() };
   } catch (error) {
+    // Stored results are shown to readers in either language, so only the
+    // language-neutral detail is kept; the UI words it.
     const name = (error as { name?: string })?.name;
-    const message =
-      name === "TimeoutError" || name === "AbortError"
-        ? L("请求超时", "Request timed out")
-        : L("无法连接网关：", "Cannot reach the gateway: ") + (error instanceof Error ? error.message : String(error));
-    return { ok: false, ms: Date.now() - started, error: redact(message), at: Date.now() };
+    if (name === "TimeoutError" || name === "AbortError")
+      return { ok: false, ms: Date.now() - started, kind: "timeout", at: Date.now() };
+    const detail = error instanceof Error ? error.message : String(error);
+    return { ok: false, ms: Date.now() - started, kind: "unreachable", error: redact(detail), at: Date.now() };
   }
 }
 

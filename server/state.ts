@@ -15,6 +15,8 @@ import { L } from "./i18n";
 
 export interface SavedConnection extends Connection {
   key: string;
+  /** The last refresh error in both languages, when known; `error` is then derived per reader. */
+  errorTexts?: { zh: string; en: string };
 }
 export interface State {
   version: 2;
@@ -144,6 +146,7 @@ export function mergeCatalog(
   connection.models = [...result.values()];
   connection.lastRefresh = Date.now();
   connection.error = null;
+  delete connection.errorTexts;
 }
 
 /**
@@ -183,8 +186,10 @@ export function snapshotOf(state: State, agents: Snapshot["agents"]): Snapshot {
   return {
     agents,
     bindings: state.bindings,
-    connections: state.connections.map(
-      ({ key: _key, ...publicFields }) => publicFields,
-    ),
+    // A stored error is shown in the reader's language when both texts exist.
+    connections: state.connections.map(({ key: _key, errorTexts, ...publicFields }) => ({
+      ...publicFields,
+      error: errorTexts ? L(errorTexts.zh, errorTexts.en) : publicFields.error,
+    })),
   };
 }

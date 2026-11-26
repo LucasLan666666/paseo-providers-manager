@@ -15,7 +15,7 @@ import { AgentView } from "./AgentView";
 import { ConnectionForm } from "./ConnectionForm";
 import { ConnectionLibrary } from "./ConnectionLibrary";
 import { agentsUsing, bindingFor, connectionById } from "./derive";
-import { protocolLabel } from "./format";
+import { count, protocolLabel } from "./format";
 import { ModelSheet } from "./ModelSheet";
 import {
   readScreenMemory,
@@ -71,10 +71,19 @@ function createBoot(params: PluginScreenProps["params"]): BootState {
 }
 
 export function ManagerScreen(props: PluginScreenProps) {
-  const { lang } = useLanguage();
+  const { lang, ready } = useLanguage();
   return (
     <UiProvider theme={props.theme} compact={props.layout.compact} lang={lang}>
-      <Manager {...props} />
+      {/* Wait for the device language setting: the first requests carry the
+          language and their messages may be stored, so they must not go out
+          in the "follow Paseo" language when the user chose another one. */}
+      {ready ? (
+        <Manager {...props} />
+      ) : (
+        <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: props.theme.colors.surface0 }}>
+          <Loading />
+        </View>
+      )}
     </UiProvider>
   );
 }
@@ -531,7 +540,7 @@ function NoAgents({ snapshot }: { snapshot: Snapshot }) {
         title={tr("服务端没有返回 Agent", "The server returned no agents")}
         description={tr(
           `当前快照包含 ${snapshot.connections.length} 个连接，但没有任何 Agent 描述。请刷新或检查插件服务端。`,
-          `The snapshot has ${snapshot.connections.length} connections but no agent descriptions. Refresh or check the plugin server.`,
+          `The snapshot has ${count(snapshot.connections.length, "connection", "connections")} but no agent descriptions. Refresh or check the plugin server.`,
         )}
       />
     </Card>

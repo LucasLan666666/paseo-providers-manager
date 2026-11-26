@@ -4,7 +4,7 @@ import type { Action, Operation, SettingChange } from "../shared/contracts";
 import { limitIssue, resolveModel } from "../shared/limits";
 import { protocolInfo } from "../shared/protocols";
 import { agents, localizedAgents } from "./agents";
-import { discover, fetchCatalog } from "./catalog";
+import { CatalogError, discover, fetchCatalog } from "./catalog";
 import { enrichModels } from "./match";
 import { probeModels } from "./probe";
 import { preparePatch, pruneGenerations } from "./registry";
@@ -40,6 +40,7 @@ function kindLabel(kind: string | undefined): string {
 }
 
 async function refresh(conn: SavedConnection) {
+  delete conn.errorTexts;
   try {
     const models = await discover(conn);
     // Name matching across models.dev fills what the gateway and an exact
@@ -49,9 +50,11 @@ async function refresh(conn: SavedConnection) {
     mergeCatalog(conn, models);
   } catch (error) {
     const message = error instanceof Error ? error.message : L("目录请求失败", "Model list request failed");
-    conn.error = conn.key
-      ? message.replaceAll(conn.key, "••••").slice(0, 300)
-      : message.slice(0, 300);
+    const redact = (text: string) => (conn.key ? text.replaceAll(conn.key, "••••") : text).slice(0, 300);
+    conn.error = redact(message);
+    // Keep both languages so a reader in the other language sees it translated.
+    if (error instanceof CatalogError)
+      conn.errorTexts = { zh: redact(error.texts.zh), en: redact(error.texts.en) };
   }
 }
 

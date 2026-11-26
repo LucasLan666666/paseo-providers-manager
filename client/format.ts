@@ -34,7 +34,11 @@ export function rawTokens(value: number | null | undefined): string {
   return value == null ? "" : String(value);
 }
 
-const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
+/** "1 model" / "3 models" for the English side of a message. */
+export function count(n: number, one: string, many: string): string {
+  return `${n} ${n === 1 ? one : many}`;
+}
+const plural = count;
 
 export function formatRelativeTime(timestamp: number | null | undefined, lang: Lang, now = Date.now()): string {
   if (timestamp == null) return pick(lang, "从未刷新", "never refreshed");

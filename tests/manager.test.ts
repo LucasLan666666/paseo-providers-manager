@@ -484,6 +484,7 @@ test("real-request tests record per-model results and never echo the key", async
     assert.equal(probes.good.ok, true);
     assert.equal(probes.bad.ok, false);
     assert.match(probes.bad.error ?? "", /^HTTP 404 model not found/);
+    assert.equal(probes.bad.kind, "http", "the stored result is language-neutral");
     assert.ok(!probes.bad.error?.includes("test-key"), "the key is redacted");
   } finally {
     await g.close();

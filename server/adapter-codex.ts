@@ -66,7 +66,7 @@ export function codexCatalog(
       ...template,
       slug: model.id,
       display_name: model.label.trim() || model.id,
-      description: `${model.id}（Providers Manager）`,
+      description: `${model.id} (Providers Manager)`,
       visibility: "list",
       context_window: model.context,
       max_context_window: model.context,

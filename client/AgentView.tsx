@@ -10,7 +10,7 @@ import {
   connectionById,
   type AgentDescriptor,
 } from "./derive";
-import { protocolLabel } from "./format";
+import { count, protocolLabel } from "./format";
 import { NativeModels } from "./NativeModels";
 import { BoundConnectionCard, CompatiblePicker } from "./ConnectionCard";
 import {
@@ -216,7 +216,7 @@ export function AgentView({
                       {connection.error ? <Badge tone="danger" label={tr("刷新失败", "Refresh failed")} /> : null}
                     </View>
                     <Text style={t.tiny} numberOfLines={1}>
-                      {tr(`${connection.models.length} 个模型`, `${connection.models.length} models`)}
+                      {tr(`${connection.models.length} 个模型`, count(connection.models.length, "model", "models"))}
                       {connection.catalogProvider ? tr(` · 目录 ${connection.catalogProvider}`, ` · catalog ${connection.catalogProvider}`) : ""}
                     </Text>
                   </View>

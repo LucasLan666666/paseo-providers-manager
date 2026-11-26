@@ -64,7 +64,7 @@ export async function antigravityProvider(
           .join("、")} 未映射到 agy 内置的 gemini-4-neon / gemini-4-carbon / gemini-4-hydrogen / gemini-4-argon / gemini-3.8-flash / gemini-3.7-flash / gemini-3.6-flash / gemini-3.1-pro（可带 -low/-medium/-high/-xhigh）。`,
         `Antigravity ACP can only select its built-in models; ${unsupported
           .map((model) => model.id)
-          .join(", ")} does not map to agy's gemini-4-neon / gemini-4-carbon / gemini-4-hydrogen / gemini-4-argon / gemini-3.8-flash / gemini-3.7-flash / gemini-3.6-flash / gemini-3.1-pro (optionally with -low/-medium/-high/-xhigh).`,
+          .join(", ")} ${unsupported.length === 1 ? "does" : "do"} not map to agy's gemini-4-neon / gemini-4-carbon / gemini-4-hydrogen / gemini-4-argon / gemini-3.8-flash / gemini-3.7-flash / gemini-3.6-flash / gemini-3.1-pro (optionally with -low/-medium/-high/-xhigh).`,
       ),
     );
   }

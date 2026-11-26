@@ -85,7 +85,9 @@ const modelSetting = z.object({
 const probe = z.object({
   ok: z.boolean(),
   ms: z.number().nonnegative().optional(),
+  /** Language-neutral detail: "HTTP 404 …" or the network error; the UI adds the localized part. */
   error: z.string().max(400).optional(),
+  kind: z.enum(["http", "timeout", "unreachable"]).optional(),
   at: z.number(),
 });
 export const connectionSchema = z.object({

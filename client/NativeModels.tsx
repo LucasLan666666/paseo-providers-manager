@@ -3,6 +3,7 @@ import type { PluginTheme } from "@getpaseo/plugin";
 import { Pressable, Text, TextInput, View } from "react-native";
 import { useState } from "react";
 import { nativeCatalogRpc, type AgentId } from "../shared/contracts";
+import { count } from "./format";
 import { useTr } from "./ui";
 
 /**
@@ -39,7 +40,7 @@ function Catalog({ agent, theme }: { agent: AgentId; theme: PluginTheme }) {
         list.length
           ? tr(
               `已检查 ${list.length} 个原生模型，目录可正常列出；未发送推理消息。`,
-              `Checked ${list.length} native models; the list loads. No inference request was sent.`,
+              `Checked ${count(list.length, "native model", "native models")}; the list loads. No inference request was sent.`,
             )
           : tr("此主机未返回可用模型。", "This host returned no models."),
       );
