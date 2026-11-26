@@ -16,6 +16,8 @@ export interface CodexModelInfo {
 }
 
 const TTL_MS = 60 * 60 * 1000;
+/** A failed read (Codex missing, slow start) is retried soon, not after an hour. */
+const FAILURE_TTL_MS = 60 * 1000;
 let cached: { at: number; models: CodexModelInfo[] | undefined } | undefined;
 
 /**
@@ -28,7 +30,7 @@ let cached: { at: number; models: CodexModelInfo[] | undefined } | undefined;
 export async function codexBundledCatalog(): Promise<CodexModelInfo[] | undefined> {
   // Tests must not depend on a locally installed Codex.
   if (process.env.PPM_DISABLE_CODEX_CATALOG) return undefined;
-  if (cached && Date.now() - cached.at < TTL_MS) return cached.models;
+  if (cached && Date.now() - cached.at < (cached.models ? TTL_MS : FAILURE_TTL_MS)) return cached.models;
   const home = await mkdtemp(join(tmpdir(), "ppm-codex-catalog-"));
   try {
     const stdout = await new Promise<string>((resolve, reject) => {

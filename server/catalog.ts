@@ -810,7 +810,10 @@ function applyCatalog(models: Model[], raw: unknown, catalogProvider: string): v
     if (model.context === undefined && limits.context !== undefined) {
       model.context = { value: limits.context, source: "catalog" };
     }
-    if (model.output === undefined && limits.output !== undefined) {
+    // models.dev lists an unpublished output as equal to the context; leave it
+    // to the name matcher, which offers a suggestion instead.
+    const window = limits.context ?? model.context?.value;
+    if (model.output === undefined && limits.output !== undefined && !(window && limits.output >= window)) {
       model.output = { value: limits.output, source: "catalog" };
     }
   }

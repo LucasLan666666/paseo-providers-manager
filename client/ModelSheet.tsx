@@ -75,8 +75,12 @@ const SUGGESTION_REASONS = {
   loose: "只在第三方目录中找到",
 } as const;
 
+// Model ids cannot contain NUL (server/adapter-common.ts MODEL_ID), unlike "::"
+// which appears in Bedrock-style ARNs.
+const KEY_SEPARATOR = "\u0000";
+
 function fieldKey(model: string, field: LimitField): string {
-  return `${model}::${field}`;
+  return `${model}${KEY_SEPARATOR}${field}`;
 }
 
 function sourceText(source: LimitSource, ref?: string): string {
@@ -124,7 +128,7 @@ function collectChanges(
   const changes: SettingChange[] = [];
   const errors: Record<string, string> = {};
   for (const [key, raw] of Object.entries(texts)) {
-    const [model, field] = key.split("::") as [string, LimitField];
+    const [model, field] = key.split(KEY_SEPARATOR) as [string, LimitField];
     if (!modelById(connection, model)) continue;
     const initial = connection.settings?.[model]?.[field];
     const text = raw.trim();
@@ -263,11 +267,14 @@ export function ModelSheet({
 
   const resolvedFor = (model: Model): ResolvedModel => resolveModel(draft?.view ?? connection!, model);
 
-  // A manual output that fills the window would be rejected by the server.
+  // A manual output that fills the window would be rejected by the server for
+  // the models this save generates or edits; other rows don't block saving.
   const orderErrors = useMemo(() => {
     const errors: Record<string, string> = {};
     if (!connection || !draft) return errors;
+    const edited = new Set(Object.keys(texts).map((key) => key.split(KEY_SEPARATOR)[0]));
     for (const model of connection.models) {
+      if (!selected.includes(model.id) && !edited.has(model.id)) continue;
       const setting = draft.view.settings?.[model.id];
       if (!setting?.output) continue;
       const resolved = resolveModel(draft.view, model);
@@ -275,7 +282,22 @@ export function ModelSheet({
         errors[fieldKey(model.id, "output")] = `必须小于上下文 ${formatTokens(resolved.context.value)}`;
     }
     return errors;
-  }, [connection, draft]);
+  }, [connection, draft, selected, texts]);
+
+  // Open the rows whose values block saving, so the cause is visible.
+  const errorModels = useMemo(
+    () => [...Object.keys(orderErrors), ...Object.keys(collected.errors)].map((key) => key.split(KEY_SEPARATOR)[0]),
+    [orderErrors, collected.errors],
+  );
+  useEffect(() => {
+    if (!errorModels.length) return;
+    setExpanded((current) => {
+      if (errorModels.every((id) => current.has(id))) return current;
+      const next = new Set(current);
+      for (const id of errorModels) next.add(id);
+      return next;
+    });
+  }, [errorModels]);
 
   const savedFallback = connection?.fallback ?? {};
   const fallbackDirty =
@@ -413,7 +435,7 @@ export function ModelSheet({
   });
   const probing = busy === `probe:${connection.id}`;
 
-  const issueModelIds = new Set<string>(missing);
+  const issueModelIds = new Set<string>([...missing, ...errorModels]);
   for (const model of allModels) {
     if (!selected.includes(model.id)) continue;
     if (
@@ -722,7 +744,11 @@ export function ModelSheet({
                 {missing.length + unlisted.length ? ` · ${missing.length + unlisted.length} 个缺失` : ""}
               </Text>
               {hasErrors ? (
-                <Text style={{ color: theme.colors.statusDanger, fontSize: 11 }}>请修正无效的上限值</Text>
+                <Text style={{ color: theme.colors.statusDanger, fontSize: 11 }}>
+                  {Object.keys(draft.fallbackErrors).length
+                    ? "请修正兜底值"
+                    : `请修正 ${new Set(errorModels).size} 个模型的上限值（见“待处理”）`}
+                </Text>
               ) : selected.length === 0 ? (
                 <Text style={{ color: theme.colors.statusWarning, fontSize: 11 }}>至少选择一个模型，或清空选择</Text>
               ) : null}

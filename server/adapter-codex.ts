@@ -19,12 +19,17 @@ function tomlString(value: string): string {
   return JSON.stringify(value);
 }
 
-/** The bundled entry closest to an unknown slug: its family parent or child, else any listed model. */
-function templateFor(slug: string, bundled: readonly CodexModelInfo[]): CodexModelInfo {
-  const related = bundled
+/**
+ * The bundled entry of the same family (parent "gpt-5.5" for
+ * "gpt-5.5-openai-compact", or a child "gpt-6-sol" for "gpt-6"). An entry
+ * carries request-shape settings (reasoning levels, tool modes, instructions),
+ * so an unrelated model is never cloned: without a family member Codex keeps
+ * its own handling of the unknown model.
+ */
+function templateFor(slug: string, bundled: readonly CodexModelInfo[]): CodexModelInfo | undefined {
+  return bundled
     .filter((entry) => slug.startsWith(`${entry.slug}-`) || entry.slug.startsWith(`${slug}-`))
-    .sort((a, b) => b.slug.length - a.slug.length);
-  return related[0] ?? bundled.find((entry) => entry.visibility === "list") ?? bundled[0];
+    .sort((a, b) => b.slug.length - a.slug.length)[0];
 }
 
 /**
@@ -32,7 +37,8 @@ function templateFor(slug: string, bundled: readonly CodexModelInfo[]): CodexMod
  * generic fallback. `model_catalog_json` replaces the whole built-in catalog,
  * so the generated catalog is the bundled one with only these changes:
  *  - a known model whose context the user set manually gets that context
- *  - an unknown chat model gets an entry cloned from its closest known model
+ *  - an unknown chat model gets an entry cloned from a model of its family
+ *    (unknown models without one are left to Codex)
  * Returns undefined when nothing needs changing (Codex keeps its own catalog).
  */
 export function codexCatalog(
@@ -55,8 +61,10 @@ export function codexCatalog(
       });
       continue;
     }
+    const template = templateFor(model.id, bundled);
+    if (!template) continue;
     added.push({
-      ...templateFor(model.id, bundled),
+      ...template,
       slug: model.id,
       display_name: model.label.trim() || model.id,
       description: `${model.id}（Providers Manager）`,

@@ -66,6 +66,20 @@ export function migrateState(raw: StateV1 | State): State {
         connection.settings = { ...(connection.settings ?? {}), [model]: setting };
     }
   }
+  // v1 accepted outputs that relied on an agent default context, or that two
+  // agents disagreed on. A migrated manual output that would now fill the
+  // window is dropped; the automatic value (clamped) takes over.
+  for (const connection of connections) {
+    for (const [id, setting] of Object.entries(connection.settings ?? {})) {
+      if (!setting.output) continue;
+      const model = connection.models.find((m) => m.id === id) ?? { id, label: id, listed: false };
+      if (limitIssue(resolveModel(connection, model))) {
+        const { output: _dropped, ...rest } = setting;
+        if (Object.keys(rest).length) connection.settings![id] = rest;
+        else delete connection.settings![id];
+      }
+    }
+  }
   return { version: 2, owner: raw.owner, connections, bindings };
 }
 

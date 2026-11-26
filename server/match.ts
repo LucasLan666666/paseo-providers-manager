@@ -34,6 +34,7 @@ interface Row {
 
 interface Index {
   exact: Map<string, Row[]>;
+  strong: Map<string, Row[]>;
   norm: Map<string, Row[]>;
   loose: Map<string, Row[]>;
   byVendor: Map<string, Row[]>;
@@ -81,22 +82,34 @@ const positive = (value: unknown) =>
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-export function normalizeModelId(raw: string): string {
+/**
+ * Spelling-only normalization: case, a "vendor/" or "models/" prefix and an
+ * Ollama ":latest" tag. These name the same model, so a hit is trusted.
+ */
+function strongId(raw: string): string {
   let id = raw.trim().toLowerCase().replace(/^models\//, "");
   if (id.includes("/")) id = id.slice(id.lastIndexOf("/") + 1);
-  return id
+  return id.replace(/:latest$/, "");
+}
+
+/**
+ * Also drops "@region", a date and "-latest". These can point at a different
+ * snapshot or a regional deployment with other limits, so a hit through them is
+ * only offered as a suggestion.
+ */
+export function normalizeModelId(raw: string): string {
+  return strongId(raw)
     .replace(/@[\w.-]+$/, "")
-    .replace(/:latest$/, "")
     .replace(/-(\d{8}|\d{4}-\d{2}-\d{2})$/, "")
     .replace(/-latest$/, "");
 }
 
 /** Ollama-style size tags ("qwen3-embedding:8b") are part of the model name. */
-function idVariants(raw: string): string[] {
-  const id = normalizeModelId(raw);
+function withTag(id: string): string {
   const tagged = /^(.*):([a-z0-9._-]+)$/.exec(id);
-  return tagged ? [`${tagged[1]}-${tagged[2]}`] : [id];
+  return tagged ? `${tagged[1]}-${tagged[2]}` : id;
 }
+const idVariants = (raw: string) => [withTag(normalizeModelId(raw))];
 
 const looseKey = (value: string) => value.replace(/[^a-z0-9]/g, "");
 
@@ -160,7 +173,7 @@ function buildIndex(raw: unknown): Index | undefined {
       if (vendor && isRecord(container[vendor])) vendors.add(vendor);
     }
   }
-  const index: Index = { exact: new Map(), norm: new Map(), loose: new Map(), byVendor: new Map() };
+  const index: Index = { exact: new Map(), strong: new Map(), norm: new Map(), loose: new Map(), byVendor: new Map() };
   const push = (map: Map<string, Row[]>, key: string, row: Row) => {
     const list = map.get(key);
     if (list) list.push(row);
@@ -186,6 +199,7 @@ function buildIndex(raw: unknown): Index | undefined {
         economy: economyWindow(entry, ctx),
       };
       push(index.exact, mid, row);
+      push(index.strong, withTag(strongId(mid)), row);
       push(index.norm, normalizeModelId(mid), row);
       push(index.loose, looseKey(normalizeModelId(mid)), row);
       if (vendor) push(index.byVendor, vendor, row);
@@ -222,8 +236,10 @@ function lookup(index: Index, id: string, restrict?: string): Match | undefined 
   const filter = (rows: Row[] | undefined) => (rows ?? []).filter((row) => !restrict || row.pid === restrict);
   let hits = filter(index.exact.get(id));
   let loose = false;
+  if (!hits.length) hits = filter(index.strong.get(withTag(strongId(id))));
   for (const variant of hits.length ? [] : idVariants(id)) {
     hits = filter(index.norm.get(variant));
+    if (hits.length) loose = true;
     if (hits.length) break;
   }
   if (!hits.length && !restrict) {
@@ -251,8 +267,22 @@ function lookup(index: Index, id: string, restrict?: string): Match | undefined 
   }
   const live = (rows: Row[]) => rows.filter((row) => row.status !== "deprecated");
   const pool = [live(official), official, live(hits), hits].find((rows) => rows.length)!;
-  const ctx = modeThenMin(pool.map((row) => row.ctx));
-  const out = modeThenMin(pool.map((row) => row.out));
+  let ctx = modeThenMin(pool.map((row) => row.ctx));
+  let out = modeThenMin(pool.map((row) => row.out));
+  // The vendor value came through a canonical id or a different spelling, but
+  // rows listing this exact id know smaller limits (a hosted variant): trust
+  // the smaller value.
+  const exact = (index.exact.get(id) ?? []).filter((row) => !restrict || row.pid === restrict);
+  if (exact.length && !pool.some((row) => row.mid === id)) {
+    const cap = (values: Array<number | undefined>) => {
+      const known = values.filter((v): v is number => !!v);
+      return known.length ? Math.max(...known) : undefined;
+    };
+    const ctxCap = cap(exact.map((row) => row.ctx));
+    const outCap = cap(exact.map((row) => row.out));
+    if (ctx && ctxCap && ctxCap < ctx) ctx = ctxCap;
+    if (out && outCap && outCap < out) out = outCap;
+  }
   const pick =
     pool.find((row) => row.ctx === ctx && row.pid === vendor) ?? pool.find((row) => row.ctx === ctx) ?? pool[0];
   return { confident: official.length > 0 && !loose, pool, pick, ctx, out };
@@ -339,8 +369,17 @@ export function enrichModels(models: Model[], catalog: unknown, options: { provi
     if (model.kind !== "chat") continue;
     model.caps = { ...match.pick.caps, ...(model.caps ?? {}) };
     // An explicit catalog provider keeps limits strict (exact id, discover());
-    // it only contributes capabilities and the model kind here.
-    if (options.provider) continue;
+    // it only contributes capabilities, the model kind and, for an output it
+    // lists as equal to the context, a suggestion.
+    if (options.provider) {
+      if (!model.output && match.ctx && match.out && match.out >= match.ctx)
+        model.suggested = {
+          output: Math.min(32_768, Math.floor(match.ctx / 4)),
+          reason: "output-unknown",
+          ref,
+        };
+      continue;
+    }
     if (!match.confident) {
       // Third-party or punctuation-insensitive hit: offer it, don't apply it.
       const out = match.out && match.ctx && match.out >= match.ctx ? undefined : match.out;

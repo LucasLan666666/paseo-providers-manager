@@ -149,7 +149,10 @@ export class Manager {
   private async probe(action: Extract<Action, { type: "probe" }>, paseo: PaseoApi) {
     const state = await this.serial(() => this.storage.load(paseo));
     const conn = findConnection(state, action.connection);
-    const results = await probeModels(conn, action.models);
+    const known = new Set(conn.models.map((model) => model.id));
+    const models = action.models.filter((id) => known.has(id));
+    if (!models.length) throw new Error("没有可测试的模型，请刷新连接后重试。");
+    const results = await probeModels(conn, models);
     return this.serial(async (): Promise<Omit<Operation, "job">> => {
       const current = await this.storage.load(paseo);
       const next = structuredClone(current);
@@ -244,6 +247,7 @@ export class Manager {
           )
             throw new Error("请先停用使用该连接的模型，再切换协议。");
           const protocolChanged = action.id !== undefined && conn.protocol !== action.protocol;
+          const previousTarget = `${conn.url}|${conn.protocol}|${conn.key}`;
           Object.assign(conn, {
             name,
             url: action.url.replace(/\/+$/, ""),
@@ -253,6 +257,8 @@ export class Manager {
             key: action.key ? action.key : copiedKey ?? action.key ?? conn.key,
           });
           conn.hasKey = !!conn.key;
+          // Test results describe the old address, protocol or key.
+          if (`${conn.url}|${conn.protocol}|${conn.key}` !== previousTarget) delete conn.probes;
           if (!action.id) next.connections.push(conn);
           // Bindings left on this connection have no selected models (the guard
           // above). Drop the ones whose agent cannot use the new protocol, so
@@ -305,16 +311,25 @@ export class Manager {
           applyChanges(conn, action.changes ?? []);
           const selected = [...new Set(action.selected)];
           const targets = [action.agent, ...(action.alsoApply ?? []).filter((a) => a !== action.agent)];
-          for (const agentId of targets) {
+          let primaryDefault: string | undefined;
+          for (const [index, agentId] of targets.entries()) {
             const descriptor = agents.find((a) => a.id === agentId);
             if (!descriptor?.protocols.includes(conn.protocol))
               throw new Error(`${descriptor?.label ?? agentId} 不支持此连接的协议。`);
             const binding = getBinding(next, agentId, conn.id);
             binding.selected = [...selected];
+            if (index > 0) {
+              // "同时应用到" copies the selection and the default model as they are
+              // on the agent being edited, whether or not the default changed now.
+              if (primaryDefault) binding.default = primaryDefault;
+              else delete binding.default;
+              continue;
+            }
             if (action.default !== undefined) {
               if (action.default === null || !selected.includes(action.default)) delete binding.default;
               else binding.default = action.default;
             } else if (binding.default && !selected.includes(binding.default)) delete binding.default;
+            primaryDefault = binding.default;
           }
           if (targets.length > 1) message = `已更新 ${targets.length} 个 Agent 的模型配置`;
           break;

@@ -222,11 +222,17 @@ test("Codex writes model_catalog_json only when the catalog changes", async () =
   try {
     const plain = await buildProvider("codex", connection("responses"), [{ id: "gpt-6-luna", label: "L", context: 272000 }], join(root, "a"), { codexCatalog: bundled });
     assert.doesNotMatch(await readFile(join(plain.env.CODEX_HOME, "config.toml"), "utf8"), /model_catalog_json/);
-    const custom = await buildProvider("codex", connection("responses"), [{ id: "relay-only", label: "R", context: 64000 }], join(root, "b"), { codexCatalog: bundled });
+    const unrelated = await buildProvider("codex", connection("responses"), [{ id: "relay-only", label: "R", context: 64000 }], join(root, "u"), { codexCatalog: bundled });
+    assert.doesNotMatch(
+      await readFile(join(unrelated.env.CODEX_HOME, "config.toml"), "utf8"),
+      /model_catalog_json/,
+      "a model without a family member in Codex's catalog is left to Codex",
+    );
+    const custom = await buildProvider("codex", connection("responses"), [{ id: "gpt-5.5-openai-compact", label: "C", context: 64000 }], join(root, "b"), { codexCatalog: bundled });
     const toml = await readFile(join(custom.env.CODEX_HOME, "config.toml"), "utf8");
     assert.match(toml, /model_catalog_json = ".*models\.json"/);
     const written = JSON.parse(await readFile(join(custom.env.CODEX_HOME, "models.json"), "utf8"));
-    assert.deepEqual(written.models.map((entry: CodexModelInfo) => entry.slug), ["gpt-6-luna", "gpt-5.5", "relay-only"]);
+    assert.deepEqual(written.models.map((entry: CodexModelInfo) => entry.slug), ["gpt-6-luna", "gpt-5.5", "gpt-5.5-openai-compact"]);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

@@ -45,11 +45,31 @@ test("normalizes vendor prefixes, :latest and date suffixes", () => {
   assert.equal(normalizeModelId("glm-4.6-20251208"), "glm-4.6");
 });
 
-test("a relay id reaches the vendor's own row through its canonical id", () => {
+test("a relay id reaches the vendor's row through its canonical id, capped by rows of that exact id", () => {
   const list = models("minimax-m27");
   enrichModels(list, catalog);
-  assert.deepEqual(list[0].context, { value: 204800, source: "catalog", ref: "minimax/MiniMax-M2.7" });
-  assert.equal(list[0].output?.value, 131072);
+  // venice lists "minimax-m27" itself with smaller limits: the smaller values win.
+  assert.deepEqual(list[0].context, { value: 198000, source: "catalog", ref: "minimax/MiniMax-M2.7" });
+  assert.equal(list[0].output?.value, 32768);
+  const vendorId = models("MiniMax-M2.7");
+  enrichModels(vendorId, catalog);
+  assert.equal(vendorId[0].context?.value, 204800, "the vendor's own id keeps the vendor values");
+});
+
+test("hits that only match after dropping -latest, @region or a date are suggestions", () => {
+  const list = models("glm-9-latest", "glm-9@eu", "glm-9-20260101", "ZhipuAI/GLM-9");
+  enrichModels(list, catalog);
+  for (const model of list.slice(0, 3)) {
+    assert.equal(model.context, undefined, model.id);
+    assert.equal(model.suggested?.reason, "loose", model.id);
+  }
+  assert.equal(list[3].context?.value, 204800, "case and a vendor prefix are only spelling");
+});
+
+test("an explicit provider offers a suggestion for an output listed as equal to the context", () => {
+  const list = models("only-here");
+  enrichModels(list, { thirdparty: { models: { "only-here": chat({ context: 64000, output: 64000 }) } } }, { provider: "thirdparty" });
+  assert.deepEqual(list[0].suggested, { output: 16000, reason: "output-unknown", ref: "thirdparty/only-here" });
 });
 
 test("the vendor's own row wins over another vendor's plan", () => {

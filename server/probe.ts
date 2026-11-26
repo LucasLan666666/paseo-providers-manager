@@ -5,6 +5,16 @@ import type { SavedConnection } from "./state";
 const TIMEOUT_MS = 60_000;
 const CONCURRENCY = 4;
 const PROMPT = "Reply with: ok";
+const MAX_BODY = 256 * 1024;
+
+function hasErrorBody(body: string): boolean {
+  try {
+    const parsed = JSON.parse(body) as { error?: unknown; type?: unknown };
+    return (parsed.error !== undefined && parsed.error !== null) || parsed.type === "error";
+  } catch {
+    return false;
+  }
+}
 
 interface ProbeRequest {
   url: string;
@@ -20,7 +30,9 @@ function requestFor(conn: SavedConnection, model: string): ProbeRequest {
       return {
         url: `${openAiBase(conn.url)}/chat/completions`,
         headers: { ...json, ...(conn.key ? { authorization: `Bearer ${conn.key}` } : {}) },
-        body: { model, messages: [{ role: "user", content: PROMPT }], max_tokens: 16, stream: false },
+        // OpenAI reasoning models reject max_tokens; max_completion_tokens is the
+        // current name and other gateways ignore a parameter they don't know.
+        body: { model, messages: [{ role: "user", content: PROMPT }], max_completion_tokens: 32, stream: false },
       };
     case "responses":
       return {
@@ -91,9 +103,12 @@ async function probeOne(
       redirect: "error",
       signal: timeoutSignal(TIMEOUT_MS),
     });
-    const body = await response.text().catch(() => "");
+    const length = Number(response.headers.get("content-length") ?? 0);
+    const body = length > MAX_BODY ? "" : (await response.text().catch(() => "")).slice(0, MAX_BODY);
     const ms = Date.now() - started;
-    if (response.ok) return { ok: true, ms, at: Date.now() };
+    // Some relays answer 200 with an error object instead of a model reply.
+    const failed = !response.ok || hasErrorBody(body);
+    if (!failed) return { ok: true, ms, at: Date.now() };
     return { ok: false, ms, error: redact(errorText(response.status, body)), at: Date.now() };
   } catch (error) {
     const name = (error as { name?: string })?.name;

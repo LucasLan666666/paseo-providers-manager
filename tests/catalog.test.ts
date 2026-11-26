@@ -456,7 +456,7 @@ test("fills only missing fields from an exact models.dev match and keeps gateway
         anthropic: {
           models: {
             "claude-exact": { limit: { context: 999, output: 456 } },
-            "claude-output-only": { limit: { context: 777, output: 888 } },
+            "claude-output-only": { limit: { context: 777, output: 333 } },
           },
         },
       };
@@ -477,7 +477,7 @@ test("fills only missing fields from an exact models.dev match and keeps gateway
       label: "claude-output-only",
       listed: true,
       context: { value: 777, source: "catalog" },
-      output: { value: 888, source: "catalog" },
+      output: { value: 333, source: "catalog" },
     },
     { id: "claude-exact-extra", label: "claude-exact-extra", listed: true },
   ]);
@@ -666,4 +666,15 @@ test("returns an empty list when the provider exposes no models", async () => {
   const models = await discoverTest(connection(), { fetch: mock.fetch });
 
   assert.deepEqual(models, []);
+});
+
+test("an output listed as equal to the context is not applied from an exact provider match", async () => {
+  const mock = mockFetch(() => ({ data: [{ id: "k" }] }));
+  const models = await discoverTest(connection({ catalogProvider: "vendor" }), {
+    fetch: mock.fetch,
+    loadCatalog: async () => ({ vendor: { models: { k: { limit: { context: 262144, output: 262144 } } } } }),
+  });
+  assert.deepEqual(models, [
+    { id: "k", label: "k", listed: true, context: { value: 262144, source: "catalog" } },
+  ]);
 });

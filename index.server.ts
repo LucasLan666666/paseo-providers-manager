@@ -14,26 +14,49 @@ import {
 import type { PaseoApi } from "./server/types";
 
 const ICON_TTL_MS = 10 * 60 * 1000;
+const ICON_WAIT_MS = 1500;
+/** Must stay within the snapshot contract (z.string().max(65536)). */
+const ICON_MAX_CHARS = 60_000;
 let iconCache: { at: number; icons: Record<string, string> } | undefined;
+let iconRequest: Promise<Record<string, string>> | undefined;
 
 /**
  * The icons Paseo shows for agents it learned from plugins (e.g. Muse). Built-in
  * agents have no SVG in the snapshot; the client ships Paseo's icons for those.
  */
-async function agentIcons(paseo: PaseoApi): Promise<Record<string, string>> {
-  if (iconCache && Date.now() - iconCache.at < ICON_TTL_MS) return iconCache.icons;
+async function loadIcons(paseo: PaseoApi): Promise<Record<string, string>> {
   const icons: Record<string, string> = {};
   try {
     const { entries } = await paseo.providers.snapshot();
     for (const entry of entries ?? []) {
-      if ((agentIds as readonly string[]).includes(entry.provider) && entry.iconSvg)
-        icons[entry.provider] = entry.iconSvg;
+      const svg = entry.iconSvg;
+      if (
+        (agentIds as readonly string[]).includes(entry.provider) &&
+        typeof svg === "string" &&
+        svg.length <= ICON_MAX_CHARS
+      )
+        icons[entry.provider] = svg;
     }
   } catch {
     // Icons are cosmetic; the client falls back to its own.
   }
   iconCache = { at: Date.now(), icons };
   return icons;
+}
+
+/** Never makes the snapshot wait long: a slow provider snapshot fills the cache later. */
+async function agentIcons(paseo: PaseoApi): Promise<Record<string, string>> {
+  if (iconCache && Date.now() - iconCache.at < ICON_TTL_MS) return iconCache.icons;
+  iconRequest ??= loadIcons(paseo).finally(() => {
+    iconRequest = undefined;
+  });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<undefined>((resolve) => {
+    timer = setTimeout(() => resolve(undefined), ICON_WAIT_MS);
+  });
+  const icons = await Promise.race([iconRequest, timeout]);
+  clearTimeout(timer);
+  return icons ?? iconCache?.icons ?? {};
 }
 
 export default function contribute(server: PluginServerContext) {

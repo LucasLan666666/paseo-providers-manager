@@ -9,6 +9,8 @@ import type {
 
 /** Used for models no source knows, unless the connection sets its own fallback. */
 export const FALLBACK_LIMITS = { context: 128_000, output: 16_384 } as const;
+/** An automatic output that reached the window is lowered to at most this. */
+export const CLAMPED_OUTPUT_MAX = 32_768;
 
 export type LimitField = "context" | "output";
 export type LimitSource = "manual" | "gateway" | "catalog" | "fallback";
@@ -60,8 +62,8 @@ export function isHelperModel(id: string): boolean {
  * The limits and capabilities one model really uses, shared by config
  * generation, "测试全部模型" and the UI: manual value → gateway value →
  * catalog value → connection fallback. An automatic output that would fill the
- * whole window is lowered to a quarter of it; a manual one is left alone and
- * reported by `limitIssue`.
+ * whole window is lowered to a quarter of it (at most 32K); a manual one is
+ * left alone and reported by `limitIssue`.
  */
 export function resolveModel(connection: ConnectionLimits, model: Model): ResolvedModel {
   const setting: ModelSetting = connection.settings?.[model.id] ?? {};
@@ -76,7 +78,11 @@ export function resolveModel(connection: ConnectionLimits, model: Model): Resolv
   const context = pick("context");
   let output = pick("output");
   if (output.source !== "manual" && output.value >= context.value) {
-    output = { ...output, value: Math.max(1, Math.floor(context.value / 4)), clamped: true };
+    output = {
+      ...output,
+      value: Math.max(1, Math.min(CLAMPED_OUTPUT_MAX, Math.floor(context.value / 4))),
+      clamped: true,
+    };
   }
   const caps = {} as Record<CapabilityField, boolean>;
   const capsManual: Partial<Record<CapabilityField, boolean>> = {};

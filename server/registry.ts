@@ -25,21 +25,32 @@ const hashOf = (value: unknown) =>
  * in the provider env as PPM_FINGERPRINT, so a later generator change can be
  * detected against what is actually deployed.
  */
-function plan(state: State) {
+function plan(state: State, options: { lenient?: boolean; codexSalt?: string } = {}) {
   const aliases = new Map<string, { binding: Binding; fingerprint: string }>();
   for (const binding of state.bindings) {
     if (!binding.selected.length) continue;
-    const conn = findConnection(state, binding.connection);
-    const agent = agents.find((item) => item.id === binding.agent)!;
-    if (!agent.protocols.includes(conn.protocol))
-      throw new Error(
-        `${agent.label} 无法使用此网关协议，请先取消该连接上的模型选择。`,
-      );
-    const models = resolvedModels(state, binding);
-    aliases.set(aliasFor(binding), {
-      binding,
-      fingerprint: hashOf([conn.name, conn.url, conn.protocol, conn.key, models]),
-    });
+    try {
+      const conn = findConnection(state, binding.connection);
+      const agent = agents.find((item) => item.id === binding.agent)!;
+      if (!agent.protocols.includes(conn.protocol))
+        throw new Error(
+          `${agent.label} 无法使用此网关协议，请先取消该连接上的模型选择。`,
+        );
+      const models = resolvedModels(state, binding);
+      // The generated Codex catalog starts from the installed Codex's built-in
+      // one; a Codex upgrade must regenerate it.
+      const salt = binding.agent === "codex" && options.codexSalt ? [options.codexSalt] : [];
+      aliases.set(aliasFor(binding), {
+        binding,
+        fingerprint: hashOf([conn.name, conn.url, conn.protocol, conn.key, models, ...salt]),
+      });
+    } catch (error) {
+      // The committed state is only planned to know what is deployed. If it no
+      // longer validates (an older rule set), it must not block the action that
+      // repairs it: the alias is treated as existing but out of date.
+      if (!options.lenient) throw error;
+      aliases.set(aliasFor(binding), { binding, fingerprint: "invalid" });
+    }
   }
   return aliases;
 }
@@ -50,8 +61,12 @@ export async function preparePatch(
   next: State,
   paseo: PaseoApi,
 ) {
-  const previous = plan(current);
-  const wanted = plan(next);
+  const codex = next.bindings.some((b) => b.agent === "codex" && b.selected.length)
+    ? await codexBundledCatalog()
+    : undefined;
+  const codexSalt = codex ? hashOf(codex) : undefined;
+  const previous = plan(current, { lenient: true, codexSalt });
+  const wanted = plan(next, { codexSalt });
   const { config } = await paseo.config.get();
   const removeProviders = new Set(
     [...previous.keys()].filter((id) => !wanted.has(id)),
@@ -118,7 +133,7 @@ export async function preparePatch(
         binding.agent === "fx"
           ? await fxProvider(conn, models, dir)
           : await buildProvider(binding.agent, conn, models, dir, {
-              ...(binding.agent === "codex" ? { codexCatalog: await codexBundledCatalog() } : {}),
+              ...(binding.agent === "codex" && codex ? { codexCatalog: codex } : {}),
             });
       providers[id] = {
         ...settings,

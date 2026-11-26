@@ -486,3 +486,72 @@ test("real-request tests record per-model results and never echo the key", async
     await g.close();
   }
 });
+
+test("an invalid committed state never blocks the action that repairs it", async () => {
+  const g = await gateway(() => [{ id: "m1", context_length: 64000, max_output_tokens: 4096 }]);
+  try {
+    const connection = await g.save();
+    await g.manager.action({ type: "selection", agent: "pi", connection, selected: ["m1"] }, g.api);
+    // Simulate a state written under older rules: a manual output above the window.
+    const statePath = join((g.manager as unknown as { storage: { root: string } }).storage.root, "state.json");
+    const raw = JSON.parse(await readFile(statePath, "utf8"));
+    raw.connections[0].settings = { m1: { output: { value: 90000 } } };
+    const { writeFile } = await import("node:fs/promises");
+    await writeFile(statePath, JSON.stringify(raw), { mode: 0o600 });
+    const fresh = new Manager((g.manager as unknown as { storage: { root: string } }).storage.root);
+    await fresh.action(
+      { type: "settings", connection, changes: [{ model: "m1", field: "output", value: null }] },
+      g.api,
+    );
+    assert.equal((await fresh.snapshot(g.api)).connections[0].settings, undefined);
+  } finally {
+    await g.close();
+  }
+});
+
+test("同时应用到 copies the current default even when it did not change in this save", async () => {
+  const g = await gateway(() => [
+    { id: "a", context_length: 64000, max_output_tokens: 4096 },
+    { id: "b", context_length: 64000, max_output_tokens: 4096 },
+  ]);
+  try {
+    const connection = await g.save();
+    await g.manager.action({ type: "selection", agent: "pi", connection, selected: ["a", "b"], default: "b" }, g.api);
+    await g.manager.action({ type: "selection", agent: "pi", connection, selected: ["a", "b"], alsoApply: ["omp"] }, g.api);
+    const omp = (await g.manager.snapshot(g.api)).bindings.find((b) => b.agent === "omp");
+    assert.equal(omp?.default, "b");
+  } finally {
+    await g.close();
+  }
+});
+
+test("real-request tests: request shape, error bodies, unknown ids and stale results", async () => {
+  const bodies: Array<Record<string, unknown>> = [];
+  const g = await gateway(() => [{ id: "good" }, { id: "soft-error" }], {
+    post: (_path, body) => {
+      bodies.push(body as Record<string, unknown>);
+      return body.model === "good"
+        ? { status: 200, body: { choices: [{ message: { content: "ok" } }] } }
+        : { status: 200, body: { error: { message: "quota exceeded" } } };
+    },
+  });
+  try {
+    const connection = await g.save();
+    await g.manager.action({ type: "probe", connection, models: ["good", "soft-error", "not-in-catalog"] }, g.api);
+    assert.equal(bodies.length, 2, "ids outside the catalog are not sent");
+    assert.equal(bodies[0].max_completion_tokens, 32);
+    assert.equal("max_tokens" in bodies[0], false);
+    let probes = (await g.manager.snapshot(g.api)).connections[0].probes!;
+    assert.equal(probes.good.ok, true);
+    assert.equal(probes["soft-error"].ok, false, "a 200 with an error object is a failure");
+    assert.match(probes["soft-error"].error ?? "", /quota exceeded/);
+    // A changed key makes old results meaningless.
+    await g.save("chat", { id: connection, key: "test-key" });
+    assert.ok((await g.manager.snapshot(g.api)).connections[0].probes, "same target keeps results");
+    await g.save("chat", { id: connection, url: `http://localhost:${g.port}/v1`, key: "test-key" });
+    probes = (await g.manager.snapshot(g.api)).connections[0].probes!;
+    assert.equal(probes, undefined);
+  } finally {
+    await g.close();
+  }
+});

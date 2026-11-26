@@ -157,6 +157,23 @@ test("version-1 state migrates: manual values move to the connection, agent defa
   assert.equal(migrated.connections[0].lastRefresh, null, "migrated connections refresh (and match) first");
 });
 
+test("migration drops a manual output that the v2 rules would reject", () => {
+  const id = randomUUID();
+  const migrated = migrateState({
+    version: 1,
+    owner: "owner",
+    connections: [
+      { id, name: "c", url: "https://x.test/v1", protocol: "responses", catalogProvider: "", hasKey: false, key: "", lastRefresh: null, error: null,
+        models: [{ id: "m", label: "m", listed: true }, { id: "n", label: "n", listed: true }] },
+    ],
+    bindings: [
+      // Valid in v1 for Codex (no order check) and relying on no context at all.
+      { agent: "codex", connection: id, selected: ["m", "n"], overrides: { m: { output: { value: 128000 } }, n: { context: { value: 32000 }, output: { value: 1000 } } } },
+    ],
+  });
+  assert.deepEqual(migrated.connections[0].settings, { n: { context: { value: 32000 }, output: { value: 1000 } } });
+});
+
 test("private state and rollback when daemon rejects alias changes", async () => {
   const root = await mkdtemp(join(tmpdir(), "ppm-store-"));
   try {
