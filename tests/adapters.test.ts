@@ -22,6 +22,12 @@ import {
 const models = [
   { id: "model-a", label: "Model A", context: 64000, output: 4096 },
 ];
+
+/** The value of one `codex -c key=value` override in a generated command. */
+function codexConfig(command: readonly string[] | undefined, key: string): string | undefined {
+  const arg = command?.find((item, index) => command[index - 1] === "-c" && item.startsWith(`${key}=`));
+  return arg?.slice(key.length + 1);
+}
 const connection = (protocol: AdapterConnection["protocol"]): AdapterConnection => ({
   id: "connection",
   name: "Fixture",
@@ -52,8 +58,7 @@ test("OpenAI bases are used exactly as entered", async () => {
       models,
       join(root, "codex"),
     );
-    const toml = await readFile(join(codex.env.CODEX_HOME, "config.toml"), "utf8");
-    assert.match(toml, /base_url = "https:\/\/gateway\.test"/);
+    assert.equal(codexConfig(codex.command, "model_providers.ppm.base_url"), '"https://gateway.test"');
     await assert.rejects(
       buildProvider("codex", connection("chat"), models, join(root, "codex-chat")),
       /OpenAI Chat Completions 协议；可用协议：OpenAI Responses/,
@@ -113,13 +118,14 @@ test("writes native configs and per-model limits", async () => {
       join(root, "codex"),
     );
     assert.equal(codex.extends, "codex");
-    const codexToml = await readFile(
-      join(codex.env.CODEX_HOME, "config.toml"),
-      "utf8",
-    );
-    assert.match(codexToml, /wire_api = "responses"/);
-    assert.match(codexToml, /base_url = "https:\/\/gateway.test\/v1"/);
-    assert.match(codexToml, /env_key = "PPM_GATEWAY_KEY"/);
+    // The gateway travels as `codex -c` overrides; the real ~/.codex stays in use.
+    assert.equal(codex.command?.[0], "codex");
+    assert.equal("CODEX_HOME" in codex.env, false);
+    assert.equal(codexConfig(codex.command, "model_provider"), '"ppm"');
+    assert.equal(codexConfig(codex.command, "model_providers.ppm.wire_api"), '"responses"');
+    assert.equal(codexConfig(codex.command, "model_providers.ppm.base_url"), '"https://gateway.test/v1"');
+    assert.equal(codexConfig(codex.command, "model_providers.ppm.env_key"), '"PPM_GATEWAY_KEY"');
+    assert.ok(!codex.command?.join(" ").includes("test-key"), "the key stays in the environment");
 
     const copilot = await buildProvider(
       "copilot",
@@ -149,27 +155,29 @@ test("writes native configs and per-model limits", async () => {
       join(root, "opencode"),
     );
     const opencodeConfig = JSON.parse(opencode.env.OPENCODE_CONFIG_CONTENT);
+    for (const name of ["XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "OPENCODE_CONFIG_DIR"])
+      assert.equal(name in opencode.env, false, `${name} is left to the user's real setup`);
     assert.equal(opencodeConfig.model, "ppm/model-a");
     assert.deepEqual(opencodeConfig.provider.ppm.models["model-a"].limit, {
       context: 64000,
       output: 4096,
     });
 
-    const pi = await buildProvider("pi", connection("chat"), models, join(root, "pi"));
-    const piModels = JSON.parse(
-      await readFile(join(pi.env.PI_CODING_AGENT_DIR, "models.json"), "utf8"),
-    );
-    assert.equal(piModels.providers.ppm.apiKey, "$PPM_GATEWAY_KEY");
-    assert.equal(piModels.providers.ppm.models[0].contextWindow, 64000);
-    assert.equal(piModels.providers.ppm.models[0].maxTokens, 4096);
-    assert.equal(pi.env.PPM_GATEWAY_KEY, "test-key");
-
-    const omp = await buildProvider("omp", connection("chat"), models, join(root, "omp"));
-    const ompModels = JSON.parse(
-      await readFile(join(omp.env.PI_CODING_AGENT_DIR, "models.json"), "utf8"),
-    );
-    assert.equal(ompModels.providers.ppm.apiKey, "test-key");
-    assert.equal(omp.env.PPM_GATEWAY_KEY, undefined);
+    // Pi and OMP load the gateway from a generated extension; their agent dirs stay real.
+    for (const agent of ["pi", "omp"] as const) {
+      const built = await buildProvider(agent, connection("chat"), models, join(root, agent));
+      assert.equal(built.command?.[0], agent);
+      assert.equal(built.command?.[1], "-e");
+      const source = await readFile(built.command![2], "utf8");
+      assert.match(source, /pi\.registerProvider\("ppm"/);
+      assert.match(source, /"contextWindow": 64000/);
+      assert.match(source, /"maxTokens": 4096/);
+      assert.match(source, /process\.env\.PPM_GATEWAY_KEY/);
+      assert.ok(!source.includes("test-key"), "the extension file holds no key");
+      assert.equal(built.env.PPM_GATEWAY_KEY, "test-key");
+      assert.equal("PI_CODING_AGENT_DIR" in built.env, false);
+      assert.equal("XDG_DATA_HOME" in built.env, false);
+    }
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -221,17 +229,17 @@ test("Codex writes model_catalog_json only when the catalog changes", async () =
   const root = await mkdtemp(join(tmpdir(), "ppm-adapters-"));
   try {
     const plain = await buildProvider("codex", connection("responses"), [{ id: "gpt-6-luna", label: "L", context: 272000 }], join(root, "a"), { codexCatalog: bundled });
-    assert.doesNotMatch(await readFile(join(plain.env.CODEX_HOME, "config.toml"), "utf8"), /model_catalog_json/);
+    assert.equal(codexConfig(plain.command, "model_catalog_json"), undefined);
     const unrelated = await buildProvider("codex", connection("responses"), [{ id: "relay-only", label: "R", context: 64000 }], join(root, "u"), { codexCatalog: bundled });
-    assert.doesNotMatch(
-      await readFile(join(unrelated.env.CODEX_HOME, "config.toml"), "utf8"),
-      /model_catalog_json/,
+    assert.equal(
+      codexConfig(unrelated.command, "model_catalog_json"),
+      undefined,
       "a model without a family member in Codex's catalog is left to Codex",
     );
     const custom = await buildProvider("codex", connection("responses"), [{ id: "gpt-5.5-openai-compact", label: "C", context: 64000 }], join(root, "b"), { codexCatalog: bundled });
-    const toml = await readFile(join(custom.env.CODEX_HOME, "config.toml"), "utf8");
-    assert.match(toml, /model_catalog_json = ".*models\.json"/);
-    const written = JSON.parse(await readFile(join(custom.env.CODEX_HOME, "models.json"), "utf8"));
+    const catalogPath = JSON.parse(codexConfig(custom.command, "model_catalog_json")!) as string;
+    assert.match(catalogPath, /models\.json$/);
+    const written = JSON.parse(await readFile(catalogPath, "utf8"));
     assert.deepEqual(written.models.map((entry: CodexModelInfo) => entry.slug), ["gpt-6-luna", "gpt-5.5", "gpt-5.5-openai-compact"]);
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -258,6 +266,39 @@ test("Claude Code only receives limits for models it doesn't know or manual outp
     assert.equal(mixed.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS, "204800");
     assert.equal(mixed.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS, "64000");
   } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Antigravity shares ~/.gemini except the gateway settings file", async () => {
+  const { mkdir, writeFile, lstat, readlink } = await import("node:fs/promises");
+  const root = await mkdtemp(join(tmpdir(), "ppm-agy-"));
+  const realHome = process.env.HOME;
+  try {
+    const fakeHome = join(root, "home");
+    await mkdir(join(fakeHome, ".gemini", "skills"), { recursive: true });
+    await mkdir(join(fakeHome, ".gemini", "antigravity-cli", "history"), { recursive: true });
+    await writeFile(join(fakeHome, ".gemini", "GEMINI.md"), "# mine");
+    await writeFile(join(fakeHome, ".gemini", "antigravity-cli", "settings.json"), '{"modelProvider":"mine"}');
+    process.env.HOME = fakeHome;
+    const built = await buildProvider(
+      "antigravity",
+      { ...connection("gemini"), url: "https://gemini.test" },
+      [{ id: "gemini-4-argon", label: "Argon" }],
+      join(root, "gen"),
+    );
+    const privateGemini = join(built.env.HOME, ".gemini");
+    assert.equal(await readlink(join(privateGemini, "skills")), join(fakeHome, ".gemini", "skills"));
+    assert.equal(await readlink(join(privateGemini, "GEMINI.md")), join(fakeHome, ".gemini", "GEMINI.md"));
+    assert.equal(
+      await readlink(join(privateGemini, "antigravity-cli", "history")),
+      join(fakeHome, ".gemini", "antigravity-cli", "history"),
+    );
+    const settings = join(privateGemini, "antigravity-cli", "settings.json");
+    assert.equal((await lstat(settings)).isSymbolicLink(), false, "the gateway settings stay private");
+    assert.equal(JSON.parse(await readFile(settings, "utf8")).modelProvider, "gemini");
+  } finally {
+    process.env.HOME = realHome;
     await rm(root, { recursive: true, force: true });
   }
 });

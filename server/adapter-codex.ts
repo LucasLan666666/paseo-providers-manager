@@ -6,7 +6,6 @@ import {
   ensurePrivateDir,
   modelChoices,
   openAiBase,
-  writePrivateFile,
   writePrivateJson,
   GATEWAY_KEY_ENV,
   type AdapterConnection,
@@ -81,13 +80,15 @@ export function codexCatalog(
 }
 
 /**
- * Codex reads routing from $CODEX_HOME/config.toml. Paseo's custom-provider
- * magic only generates a Responses provider when OPENAI_BASE_URL is present;
- * writing the same model_providers entry ourselves also covers a future Paseo
- * version and keeps the generated dir authoritative.
+ * The gateway is passed as `codex -c key=value` overrides (Paseo launches the
+ * provider command followed by `app-server`), so CODEX_HOME stays the user's
+ * real ~/.codex: AGENTS.md, skills, MCP servers, sessions and login are shared
+ * with their own Codex. Earlier versions used a private CODEX_HOME per
+ * generation, which hid all of that and lost history on every change.
  *
  * Codex 0.172 removed wire_api = "chat"; chat is deliberately rejected. Codex has
- * no per-model output limit, so only context windows are written.
+ * no per-model output limit, so only context windows are written (through a
+ * model catalog file referenced by model_catalog_json, see codexCatalog).
  */
 export async function codexProvider(
   connection: AdapterConnection,
@@ -97,32 +98,26 @@ export async function codexProvider(
 ): Promise<BuiltProvider> {
   assertProtocol("Codex", connection.protocol, ["responses"]);
   assertModels(models);
-  const codexHome = await ensurePrivateDir(childDir(dir, "codex"));
   const key = connection.key;
-  const catalog = codexCatalog(models, bundled);
-  const lines = [
-    `model = ${tomlString(models[0].id)}`,
-    `model_provider = "ppm"`,
+  const config: Array<[string, string]> = [
+    ["model", tomlString(models[0].id)],
+    ["model_provider", tomlString("ppm")],
+    ["model_providers.ppm.name", tomlString(connection.name || "PPM gateway")],
+    ["model_providers.ppm.base_url", tomlString(openAiBase(connection.url))],
+    ["model_providers.ppm.wire_api", tomlString("responses")],
+    ["model_providers.ppm.requires_openai_auth", "false"],
+    ["model_providers.ppm.env_key", tomlString(GATEWAY_KEY_ENV)],
   ];
+  const catalog = codexCatalog(models, bundled);
   if (catalog) {
-    const path = join(codexHome, "models.json");
+    const path = join(await ensurePrivateDir(childDir(dir, "codex")), "models.json");
     await writePrivateJson(path, { models: catalog });
-    lines.push(`model_catalog_json = ${tomlString(path)}`);
+    config.push(["model_catalog_json", tomlString(path)]);
   }
-  lines.push(
-    "",
-    "[model_providers.ppm]",
-    `name = ${tomlString(connection.name || "PPM gateway")}`,
-    `base_url = ${tomlString(openAiBase(connection.url))}`,
-    'wire_api = "responses"',
-    "requires_openai_auth = false",
-    `env_key = ${tomlString(GATEWAY_KEY_ENV)}`,
-  );
-  await writePrivateFile(join(codexHome, "config.toml"), `${lines.join("\n")}\n`);
   return {
     extends: "codex",
+    command: ["codex", ...config.flatMap(([name, value]) => ["-c", `${name}=${value}`])],
     env: {
-      CODEX_HOME: codexHome,
       // Always present so a key removed in a later generation cannot survive a
       // deep merge of provider env, and so an unauthenticated local gateway still
       // receives a disposable credential instead of an unrelated ambient one.

@@ -24,9 +24,19 @@ const hashOf = (value: unknown) =>
 /**
  * Bumped when an adapter's output changes in a way existing providers must pick
  * up even though their inputs did not change. Only listed agents regenerate.
- * claude 2: CLAUDE_CONFIG_DIR is no longer set (sessions use the real ~/.claude).
+ * v2 (all listed): the CLI's real config/home is no longer replaced —
+ * claude without CLAUDE_CONFIG_DIR, codex through `-c` instead of CODEX_HOME,
+ * pi/omp through a `-e` extension instead of a private agent dir, opencode
+ * without private XDG roots, antigravity sharing ~/.gemini.
  */
-const GENERATOR_VERSIONS: Partial<Record<Binding["agent"], number>> = { claude: 2 };
+const GENERATOR_VERSIONS: Partial<Record<Binding["agent"], number>> = {
+  claude: 2,
+  codex: 2,
+  pi: 2,
+  omp: 2,
+  opencode: 2,
+  antigravity: 2,
+};
 
 /**
  * `fingerprint` covers everything a generated config depends on. It is stored

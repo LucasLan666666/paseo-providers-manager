@@ -1,10 +1,7 @@
-import { join } from "node:path";
 import {
   anthropicBaseV1,
   assertModels,
   assertProtocol,
-  childDir,
-  ensurePrivateDir,
   modelChoices,
   openAiBase,
   requireLimits,
@@ -22,25 +19,20 @@ function packageFor(protocol: AdapterConnection["protocol"]): string {
 }
 
 /**
- * OpenCode v1 configuration. Paseo merges its bridge plugin into
- * OPENCODE_CONFIG_CONTENT, so the provider entry stays intact while every
- * generated process also gets private XDG roots. Per-model limit.context and
- * limit.output are native OpenCode fields.
+ * OpenCode v1 configuration, passed only through OPENCODE_CONFIG_CONTENT (Paseo
+ * merges its bridge plugin into it). OpenCode's own config, data, sessions and
+ * logins stay the user's real ones; earlier versions pointed the XDG roots at
+ * private per-generation directories, which hid all of that and lost history
+ * on every change. Per-model limit.context and limit.output are native fields.
  */
 export async function opencodeProvider(
   connection: AdapterConnection,
   models: readonly AdapterModel[],
-  dir: string,
+  _dir: string,
 ): Promise<BuiltProvider> {
   assertProtocol("OpenCode", connection.protocol, ["chat", "responses", "anthropic"]);
   assertModels(models);
   const limited = requireLimits("OpenCode", models);
-  const home = await ensurePrivateDir(childDir(dir, "opencode"));
-  const configRoot = await ensurePrivateDir(join(home, "config"));
-  const dataRoot = await ensurePrivateDir(join(home, "data"));
-  const stateRoot = await ensurePrivateDir(join(home, "state"));
-  const cacheRoot = await ensurePrivateDir(join(home, "cache"));
-  const configDir = await ensurePrivateDir(join(home, "config-dir"));
   const baseURL =
     connection.protocol === "anthropic"
       ? anthropicBaseV1(connection.url)
@@ -76,11 +68,6 @@ export async function opencodeProvider(
     extends: "opencode",
     env: {
       OPENCODE_CONFIG_CONTENT: JSON.stringify(config),
-      OPENCODE_CONFIG_DIR: configDir,
-      XDG_CONFIG_HOME: configRoot,
-      XDG_DATA_HOME: dataRoot,
-      XDG_STATE_HOME: stateRoot,
-      XDG_CACHE_HOME: cacheRoot,
       // Always present so a removed key cannot survive a provider-env merge and
       // an unauthenticated local gateway never receives an unrelated ambient key.
       PPM_GATEWAY_KEY: connection.key || "ppm-no-key",

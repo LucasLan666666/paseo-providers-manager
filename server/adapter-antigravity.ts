@@ -21,14 +21,32 @@ import { L } from "./i18n";
  * ~/.gemini/antigravity-cli/settings.json and has no flag to relocate only that
  * file for `agy acp` (--settings is a top-level print-mode flag; --gemini-dir is
  * not a settings directory). Give it a private HOME containing symlinks to the
- * user's files, except .gemini, so git/ssh/etc. keep working while sessions,
- * logs and CLI settings stay inside the generation directory.
+ * user's files, so git/ssh/etc. keep working. Inside ~/.gemini everything is
+ * linked too except antigravity-cli/settings.json, which carries the gateway.
  *
  * ACP only lists agy's built-in, effort-qualified models. settings.json
  * customModelsConfig entries are visible to `agy models`, but ACP session/set_model
  * rejects them ("Unknown model ID"), so a custom Gemini gateway model must map
  * onto a built-in ID. We never silently map to a different model.
  */
+/** Link every entry of `source` into `target` that `include` accepts; missing sources are fine. */
+async function linkEntries(source: string, target: string, include: (name: string) => boolean): Promise<void> {
+  let entries: string[] = [];
+  try {
+    entries = await readdir(source);
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (!include(entry)) continue;
+    try {
+      await symlink(join(source, entry), join(target, entry));
+    } catch {
+      // One entry may not be linkable; the rest still is.
+    }
+  }
+}
+
 export async function antigravityProvider(
   connection: AdapterConnection,
   models: readonly AdapterModel[],
@@ -55,6 +73,11 @@ export async function antigravityProvider(
   const gemini = await ensurePrivateDir(join(home, ".gemini"));
   const cli = await ensurePrivateDir(join(gemini, "antigravity-cli"));
   const realHome = homedir();
+  // Only agy's gateway settings must differ from the user's. Everything else in
+  // ~/.gemini (skills, GEMINI.md, history, other CLIs' data) is shared through
+  // links, so sessions behave like the user's own agy apart from the gateway.
+  await linkEntries(join(realHome, ".gemini"), gemini, (name) => name !== "antigravity-cli");
+  await linkEntries(join(realHome, ".gemini", "antigravity-cli"), cli, (name) => name !== "settings.json");
   for (const name of await readdir(realHome)) {
     if (name === ".gemini") continue;
     if (name === ".config") {

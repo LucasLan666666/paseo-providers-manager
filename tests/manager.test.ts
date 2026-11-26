@@ -314,9 +314,12 @@ test("providers are compared against the deployed PPM_FINGERPRINT", async () => 
   try {
     const connection = await g.save("responses", { url: `http://127.0.0.1:${g.port}` });
     await g.manager.action({ type: "selection", agent: "codex", connection, selected: ["m1"] }, g.api);
-    const env = () => (g.providers["ppm-codex-" + connection] as { env: Record<string, string> }).env;
-    const toml = await readFile(join(env().CODEX_HOME, "config.toml"), "utf8");
-    assert.match(toml, /base_url = "http:\/\/127\.0\.0\.1:\d+"/, "the URL is used as entered");
+    const entry = () => g.providers["ppm-codex-" + connection] as { env: Record<string, string>; command: string[] };
+    const env = () => entry().env;
+    assert.ok(
+      entry().command.some((arg) => /^model_providers\.ppm\.base_url="http:\/\/127\.0\.0\.1:\d+"$/.test(arg)),
+      "the URL is used as entered",
+    );
     assert.ok(env().PPM_FINGERPRINT);
     const first = env().PPM_GENERATION;
     // The fallback does not affect a model with gateway limits: nothing regenerates.
