@@ -1,4 +1,5 @@
 import type { AdapterConnection, AdapterModel, BuiltProvider } from "./adapter-common";
+import { L } from "./i18n";
 
 /**
  * Muse Code talks to Meta's MSP host through `muse serve`; its provider plugin
@@ -11,5 +12,10 @@ export async function museProvider(
   _models: readonly AdapterModel[],
   _dir: string,
 ): Promise<BuiltProvider> {
-  throw new Error("Muse Code 目前没有可验证的自定义推理网关接口，只能使用其登录和模型目录。");
+  throw new Error(
+    L(
+      "Muse Code 目前没有可验证的自定义推理网关接口，只能使用其登录和模型目录。",
+      "Muse Code has no verifiable custom inference gateway; only its own login and model list can be used.",
+    ),
+  );
 }

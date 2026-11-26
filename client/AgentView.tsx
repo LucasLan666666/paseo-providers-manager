@@ -25,6 +25,7 @@ import {
   Stat,
   useLayout,
   useTokens,
+  useTr,
   withAlpha,
 } from "./ui";
 
@@ -55,6 +56,7 @@ export function AgentView({
   onOpenLibrary: () => void;
 }) {
   const { theme, compact } = useLayout();
+  const { tr } = useTr();
   const t = useTokens(theme, compact);
   const [addOpen, setAddOpen] = useState(false);
   const summary = agentSummary(snapshot, descriptor.id);
@@ -74,7 +76,10 @@ export function AgentView({
         <Card style={{ gap: 10 }}>
           <AgentHeading descriptor={descriptor} snapshot={snapshot} compact={compact} />
           <Text style={t.small}>
-            模型由本机账号或云项目提供，不使用自建网关连接。可直接测试账号模型目录；不会发送推理消息。
+            {tr(
+              "模型由本机账号或云项目提供，不使用自建网关连接。可直接测试账号模型目录；不会发送推理消息。",
+              "Models come from the local account or a cloud project, not a gateway connection. You can test the account's model list; no inference request is sent.",
+            )}
           </Text>
         </Card>
         <Card style={{ gap: 10 }}>
@@ -100,19 +105,19 @@ export function AgentView({
             borderTopColor: theme.colors.border,
           }}
         >
-          <Stat label="连接" value={String(summary.bound)} />
-          <Stat label="模型" value={String(summary.selected)} tone="accent" />
+          <Stat label={tr("连接", "Connections")} value={String(summary.bound)} />
+          <Stat label={tr("模型", "Models")} value={String(summary.selected)} tone="accent" />
           {summary.conflicts ? (
-            <Stat label="冲突" value={String(summary.conflicts)} tone="warning" />
+            <Stat label={tr("冲突", "Conflicts")} value={String(summary.conflicts)} tone="warning" />
           ) : null}
           {summary.missing ? (
-            <Stat label="缺失" value={String(summary.missing)} tone="danger" />
+            <Stat label={tr("缺失", "Missing")} value={String(summary.missing)} tone="danger" />
           ) : null}
           {summary.errors ? (
-            <Stat label="异常" value={String(summary.errors)} tone="danger" />
+            <Stat label={tr("异常", "Errors")} value={String(summary.errors)} tone="danger" />
           ) : null}
           {summary.pending ? (
-            <Stat label="待确认" value={String(summary.pending)} tone="warning" />
+            <Stat label={tr("待确认", "To confirm")} value={String(summary.pending)} tone="warning" />
           ) : null}
         </View>
       </Card>
@@ -120,10 +125,10 @@ export function AgentView({
       <View style={{ gap: 10 }}>
         <SectionHead
           icon="Cable"
-          title="供应商连接"
+          title={tr("供应商连接", "Provider connections")}
           trailing={
             <Btn
-              label="添加连接"
+              label={tr("添加连接", "Add connection")}
               size="sm"
               icon="Plus"
               onPress={openAdd}
@@ -159,10 +164,11 @@ export function AgentView({
           <Card style={{ padding: 0 }}>
             <EmptyState
               icon="Cable"
-              title="尚未配置供应商"
-              description={`从连接库选择现有连接，或新建一个。${descriptor.label} 支持 ${descriptor.protocols
-                .map(protocolLabel)
-                .join(" / ")}。`}
+              title={tr("尚未配置供应商", "No provider yet")}
+              description={tr(
+                `从连接库选择现有连接，或新建一个。${descriptor.label} 支持 ${descriptor.protocols.map(protocolLabel).join(" / ")}。`,
+                `Pick a connection from the library or create one. ${descriptor.label} supports ${descriptor.protocols.map(protocolLabel).join(" / ")}.`,
+              )}
             />
           </Card>
         )}
@@ -172,10 +178,10 @@ export function AgentView({
         <View style={{ gap: 8 }}>
           <SectionHead
             icon="Link2"
-            title="可用连接"
+            title={tr("可用连接", "Available connections")}
             trailing={
               <Btn
-                label="连接库"
+                label={tr("连接库", "Library")}
                 size="sm"
                 variant="ghost"
                 icon="ArrowUpRight"
@@ -206,16 +212,16 @@ export function AgentView({
                         {connection.name}
                       </Text>
                       <Badge label={protocolLabel(connection.protocol)} />
-                      {!connection.hasKey ? <Badge tone="warning" label="无密钥" /> : null}
-                      {connection.error ? <Badge tone="danger" label="刷新失败" /> : null}
+                      {!connection.hasKey ? <Badge tone="warning" label={tr("无密钥", "No key")} /> : null}
+                      {connection.error ? <Badge tone="danger" label={tr("刷新失败", "Refresh failed")} /> : null}
                     </View>
                     <Text style={t.tiny} numberOfLines={1}>
-                      {connection.models.length} 个模型
-                      {connection.catalogProvider ? ` · 目录 ${connection.catalogProvider}` : ""}
+                      {tr(`${connection.models.length} 个模型`, `${connection.models.length} models`)}
+                      {connection.catalogProvider ? tr(` · 目录 ${connection.catalogProvider}`, ` · catalog ${connection.catalogProvider}`) : ""}
                     </Text>
                   </View>
                   <Btn
-                    label="选择模型"
+                    label={tr("选择模型", "Choose models")}
                     size="sm"
                     variant="secondary"
                     onPress={() => onManageModels(connection)}
@@ -233,9 +239,9 @@ export function AgentView({
       <Sheet
         open={addOpen}
         onOpenChange={setAddOpen}
-        title={`为 ${descriptor.label} 添加连接`}
+        title={tr(`为 ${descriptor.label} 添加连接`, `Add a connection to ${descriptor.label}`)}
         icon={<Icon name="Cable" size={18} color={theme.colors.accent} />}
-        footer={<Btn label="取消" onPress={() => setAddOpen(false)} />}
+        footer={<Btn label={tr("取消", "Cancel")} onPress={() => setAddOpen(false)} />}
       >
         <View
           style={{
@@ -251,7 +257,10 @@ export function AgentView({
         >
           <Icon name="Info" size={14} color={theme.colors.accent} />
           <Text style={[t.tiny, { flex: 1 }]}>
-            协议兼容且尚未添加的连接可以直接选择；协议不兼容的连接会灰显并说明原因。选择连接后即可挑选模型与手动限额；密钥和目录仍然全局复用。
+            {tr(
+              "协议兼容且尚未添加的连接可以直接选择；协议不兼容的连接会灰显并说明原因。选择连接后即可挑选模型与手动限额；密钥和目录仍然全局复用。",
+              "Compatible connections not added yet can be picked directly; incompatible ones are greyed out with the reason. After picking one, choose its models and limits; keys and model lists stay shared.",
+            )}
           </Text>
         </View>
         <CompatiblePicker
@@ -275,11 +284,15 @@ export function AgentView({
 
 function MissingBindingCard({ binding }: { binding: Binding }) {
   const { theme, compact } = useLayout();
+  const { tr } = useTr();
   const t = useTokens(theme, compact);
   return (
     <Card style={{ borderColor: withAlpha(theme.colors.statusWarning, 0.4) }}>
-      <Notice tone="warning" title="绑定的连接已不存在">
-        连接 {binding.connection} 已被删除或不再可用。刷新页面后绑定会同步；如果仍然存在，请删除并重新创建对应连接。
+      <Notice tone="warning" title={tr("绑定的连接已不存在", "The bound connection no longer exists")}>
+        {tr(
+          `连接 ${binding.connection} 已被删除或不再可用。刷新页面后绑定会同步；如果仍然存在，请删除并重新创建对应连接。`,
+          `Connection ${binding.connection} was deleted or is unavailable. Refreshing the page syncs the binding; if it stays, delete and recreate the connection.`,
+        )}
       </Notice>
     </Card>
   );

@@ -1,6 +1,7 @@
 import type { Probe } from "../shared/contracts";
 import { anthropicBase, geminiBase, openAiBase } from "./adapter-common";
 import type { SavedConnection } from "./state";
+import { L } from "./i18n";
 
 const TIMEOUT_MS = 60_000;
 const CONCURRENCY = 4;
@@ -114,8 +115,8 @@ async function probeOne(
     const name = (error as { name?: string })?.name;
     const message =
       name === "TimeoutError" || name === "AbortError"
-        ? "请求超时"
-        : `无法连接网关：${error instanceof Error ? error.message : String(error)}`;
+        ? L("请求超时", "Request timed out")
+        : L("无法连接网关：", "Cannot reach the gateway: ") + (error instanceof Error ? error.message : String(error));
     return { ok: false, ms: Date.now() - started, error: redact(message), at: Date.now() };
   }
 }

@@ -9,6 +9,7 @@ import {
   type Snapshot,
 } from "../shared/contracts";
 import { errorMessage } from "./format";
+import { pick, type Lang } from "../shared/i18n";
 import { useOperation } from "./useOperation";
 
 export interface RunOptions {
@@ -37,7 +38,11 @@ export interface ManagerState {
  * Loads the snapshot, kicks off the request's stale refresh on mount, and serializes
  * user actions through one busy key so every surface can show the right pending state.
  */
-export function useManager(): ManagerState {
+export function useManager(lang: Lang): ManagerState {
+  // A ref, not a dependency: reload/refreshStale keep stable identities, so a
+  // language switch never re-runs the mount effect (which refreshes gateways).
+  const langRef = useRef(lang);
+  langRef.current = lang;
   const fetchSnapshot = useRpc(snapshotRpc);
   const sendAction = useRpc(actionRpc);
   const complete = useOperation();
@@ -53,8 +58,8 @@ export function useManager(): ManagerState {
   // Every action is wrapped: the daemon may answer with a job id for work that
   // outlives Paseo's 30s RPC timeout, and useOperation polls it to completion.
   const invoke = useCallback(async (action: Action) => {
-    const started = rpc.current.sendAction(action);
-    return completeRef.current(started);
+    const started = rpc.current.sendAction({ ...action, lang: langRef.current });
+    return completeRef.current(started, langRef.current);
   }, []);
 
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
@@ -66,14 +71,14 @@ export function useManager(): ManagerState {
 
   const reload = useCallback(async (): Promise<boolean> => {
     try {
-      const next = await rpc.current.fetchSnapshot({});
+      const next = await rpc.current.fetchSnapshot({ lang: langRef.current });
       if (mounted.current) {
         setSnapshot(next);
         setLoadError(null);
       }
       return true;
     } catch (error) {
-      if (mounted.current) setLoadError(errorMessage(error));
+      if (mounted.current) setLoadError(errorMessage(error, langRef.current));
       return false;
     } finally {
       if (mounted.current) setLoading(false);
@@ -91,9 +96,10 @@ export function useManager(): ManagerState {
         await reload();
         return true;
       } catch (error) {
-        const detail = errorMessage(error);
+        const detail = errorMessage(error, langRef.current);
         if (mounted.current) setAutoRefreshError(detail);
-        if (!options.silent) toastRef.current.error(`刷新过期连接失败：${detail}`);
+        if (!options.silent)
+          toastRef.current.error(pick(langRef.current, "刷新过期连接失败：", "Refreshing stale connections failed: ") + detail);
         await reload();
         return false;
       } finally {
@@ -117,6 +123,17 @@ export function useManager(): ManagerState {
     };
   }, [refreshStale, reload]);
 
+  // Agent descriptions and stored messages come from the server in the request's
+  // language: fetch the snapshot again (no gateway traffic) when it changes.
+  const firstLang = useRef(true);
+  useEffect(() => {
+    if (firstLang.current) {
+      firstLang.current = false;
+      return;
+    }
+    void reload();
+  }, [lang, reload]);
+
   const run = useCallback(
     async (action: Action, options: RunOptions = {}): Promise<boolean> => {
       setBusy(options.key ?? action.type);
@@ -131,8 +148,8 @@ export function useManager(): ManagerState {
         options.onSuccess?.(result);
         return true;
       } catch (error) {
-        const detail = errorMessage(error);
-        toastRef.current.error(options.errorPrefix ? `${options.errorPrefix}：${detail}` : detail);
+        const detail = errorMessage(error, langRef.current);
+        toastRef.current.error(options.errorPrefix ? options.errorPrefix + pick(langRef.current, "：", ": ") + detail : detail);
         // Some handlers commit before throwing (for example a failed manual refresh).
         // Reload so the UI reflects the stored error instead of stale success state.
         await reload();

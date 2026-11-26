@@ -1,13 +1,14 @@
-import type { Capacity, Protocol } from "../shared/contracts";
-import { protocolInfo } from "../shared/protocols";
+import type { Protocol } from "../shared/contracts";
+import { pick, type Lang } from "../shared/i18n";
+import { protocolEndpoint, protocolInfo } from "../shared/protocols";
 
 /** Refresh data older than this is considered stale in the UI. */
 export const STALE_AFTER_MS = 24 * 60 * 60 * 1000;
 
-export function errorMessage(error: unknown): string {
+export function errorMessage(error: unknown, lang: Lang): string {
   if (error instanceof Error && error.message.trim()) return error.message;
   if (typeof error === "string" && error.trim()) return error;
-  return "发生未知错误，请稍后重试。";
+  return pick(lang, "发生未知错误，请稍后重试。", "Something went wrong. Try again later.");
 }
 
 export function formatTokens(value: number | null | undefined): string {
@@ -33,20 +34,27 @@ export function rawTokens(value: number | null | undefined): string {
   return value == null ? "" : String(value);
 }
 
-export function formatRelativeTime(timestamp: number | null | undefined, now = Date.now()): string {
-  if (timestamp == null) return "从未刷新";
+const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
+
+export function formatRelativeTime(timestamp: number | null | undefined, lang: Lang, now = Date.now()): string {
+  if (timestamp == null) return pick(lang, "从未刷新", "never refreshed");
   const delta = now - timestamp;
-  if (delta < 0) return "刚刚";
-  if (delta < 60_000) return "刚刚";
-  if (delta < 60 * 60_000) return `${Math.floor(delta / 60_000)} 分钟前`;
-  if (delta < 24 * 60 * 60_000) return `${Math.floor(delta / (60 * 60_000))} 小时前`;
-  if (delta < 30 * 24 * 60 * 60_000) return `${Math.floor(delta / (24 * 60 * 60_000))} 天前`;
+  if (delta < 60_000) return pick(lang, "刚刚", "just now");
+  const minutes = Math.floor(delta / 60_000);
+  if (delta < 60 * 60_000) return pick(lang, `${minutes} 分钟前`, `${plural(minutes, "minute", "minutes")} ago`);
+  const hours = Math.floor(delta / (60 * 60_000));
+  if (delta < 24 * 60 * 60_000) return pick(lang, `${hours} 小时前`, `${plural(hours, "hour", "hours")} ago`);
+  const days = Math.floor(delta / (24 * 60 * 60_000));
+  if (delta < 30 * 24 * 60 * 60_000) return pick(lang, `${days} 天前`, `${plural(days, "day", "days")} ago`);
   const date = new Date(timestamp);
   return `${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()}`;
 }
 
-export function refreshLabel(timestamp: number | null | undefined, now = Date.now()): string {
-  return timestamp == null ? "从未刷新" : `${formatRelativeTime(timestamp, now)}刷新`;
+/** Whole phrases per language: word order differs ("3 小时前刷新" / "Refreshed 3 hours ago"). */
+export function refreshLabel(timestamp: number | null | undefined, lang: Lang, now = Date.now()): string {
+  if (timestamp == null) return pick(lang, "从未刷新", "Never refreshed");
+  const relative = formatRelativeTime(timestamp, lang, now);
+  return pick(lang, `${relative}刷新`, `Refreshed ${relative}`);
 }
 
 export function isStale(timestamp: number | null | undefined, now = Date.now()): boolean {
@@ -63,17 +71,17 @@ export interface ParsedTokens {
  * Parses human token amounts: "200000", "200,000", "128k", "1.5m".
  * A blank string has no value and no error; callers decide if blank is allowed.
  */
-export function parseTokens(input: string): ParsedTokens {
+export function parseTokens(input: string, lang: Lang): ParsedTokens {
   const text = input.trim().replace(/[,_\s]/g, "").toLowerCase();
   if (!text) return {};
   const match = /^(\d+(?:\.\d+)?)([kmb])?$/.exec(text);
-  if (!match) return { error: "请输入正整数，例如 200000 或 200K" };
+  if (!match) return { error: pick(lang, "请输入正整数，例如 200000 或 200K", "Enter a whole number, e.g. 200000 or 200K") };
   const amount = Number(match[1]);
   const suffix = match[2];
   const multiplier = suffix === "b" ? 1_000_000_000 : suffix === "m" ? 1_000_000 : suffix === "k" ? 1_000 : 1;
   const value = Math.round(amount * multiplier);
   if (!Number.isSafeInteger(value) || value <= 0) {
-    return { error: "请输入大于 0 的整数" };
+    return { error: pick(lang, "请输入大于 0 的整数", "Enter a number greater than 0") };
   }
   return { value };
 }
@@ -89,12 +97,8 @@ export function protocolFullLabel(protocol: Protocol): string {
 }
 
 /** The request the gateway must serve for this protocol. */
-export function protocolDescription(protocol: Protocol): string {
-  return protocolInfo[protocol].endpoint;
-}
-
-export function sourceLabel(source: Capacity["source"]): string {
-  return source === "gateway" ? "网关" : "目录";
+export function protocolDescription(protocol: Protocol, lang: Lang): string {
+  return protocolEndpoint(protocol, lang);
 }
 
 export function sameStringSet(left: readonly string[], right: readonly string[]): boolean {

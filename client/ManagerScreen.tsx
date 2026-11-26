@@ -39,7 +39,9 @@ import {
   UiProvider,
   useLayout,
   useTokens,
+  useTr,
 } from "./ui";
+import { useLanguage } from "./i18n";
 
 interface BootState {
   view: ScreenView;
@@ -69,8 +71,9 @@ function createBoot(params: PluginScreenProps["params"]): BootState {
 }
 
 export function ManagerScreen(props: PluginScreenProps) {
+  const { lang } = useLanguage();
   return (
-    <UiProvider theme={props.theme} compact={props.layout.compact}>
+    <UiProvider theme={props.theme} compact={props.layout.compact} lang={lang}>
       <Manager {...props} />
     </UiProvider>
   );
@@ -78,8 +81,9 @@ export function ManagerScreen(props: PluginScreenProps) {
 
 function Manager(props: PluginScreenProps) {
   const { theme, compact } = useLayout();
+  const { tr, lang } = useTr();
   const t = useTokens(theme, compact);
-  const manager = useManager();
+  const manager = useManager(lang);
   const { snapshot, loading, loadError, busy, autoRefreshing, autoRefreshError } = manager;
 
   const bootRef = useRef<BootState | null>(null);
@@ -209,7 +213,7 @@ function Manager(props: PluginScreenProps) {
 
   const copyPreset = (connection: Connection, protocol?: Protocol): FormPreset => ({
     protocol,
-    name: protocol ? `${connection.name} (${protocolLabel(protocol)})` : `${connection.name} 副本`,
+    name: protocol ? `${connection.name} (${protocolLabel(protocol)})` : tr(`${connection.name} 副本`, `${connection.name} copy`),
     url: connection.url,
     catalogProvider: connection.catalogProvider,
     copyFrom: connection.id,
@@ -237,14 +241,14 @@ function Manager(props: PluginScreenProps) {
   const refreshConnection = (connection: Connection) => {
     void manager.run(
       { type: "refresh", connection: connection.id },
-      { key: `refresh:${connection.id}`, errorPrefix: "刷新连接失败" },
+      { key: `refresh:${connection.id}`, errorPrefix: tr("刷新连接失败", "Refreshing the connection failed") },
     );
   };
 
   const testConnection = (connection: Connection) => {
     void manager.run(
       { type: "testConnection", connection: connection.id },
-      { key: `testConnection:${connection.id}`, errorPrefix: "测试失败" },
+      { key: `testConnection:${connection.id}`, errorPrefix: tr("测试失败", "Test failed") },
     );
   };
 
@@ -253,7 +257,7 @@ function Manager(props: PluginScreenProps) {
     const target = deleteTarget;
     const ok = await manager.run(
       { type: "deleteConnection", connection: target.id },
-      { key: "deleteConnection", errorPrefix: "删除连接失败" },
+      { key: "deleteConnection", errorPrefix: tr("删除连接失败", "Deleting the connection failed") },
     );
     if (!ok) return;
     setDeleteTarget(null);
@@ -318,8 +322,11 @@ function Manager(props: PluginScreenProps) {
           <View style={{ flex: 1, minWidth: 0, justifyContent: "center" }}>
             <Text style={t.small} numberOfLines={compact ? 2 : 1}>
               {compact
-                ? "按 Agent 管理连接、模型与限额；过期目录自动刷新。"
-                : "先选 Agent，再为它复用连接、选择模型、校准上下文与输出限额。打开页面时自动刷新过期目录。"}
+                ? tr("按 Agent 管理连接、模型与限额；过期目录自动刷新。", "Manage connections, models and limits per agent; stale lists refresh automatically.")
+                : tr(
+                    "先选 Agent，再为它复用连接、选择模型、校准上下文与输出限额。打开页面时自动刷新过期目录。",
+                    "Pick an agent, then reuse a connection, choose models and tune context and output limits. Stale model lists refresh when the page opens.",
+                  )}
             </Text>
           </View>
           <View
@@ -332,7 +339,7 @@ function Manager(props: PluginScreenProps) {
             }}
           >
             <Btn
-              label={compact ? "刷新" : "刷新过期"}
+              label={compact ? tr("刷新", "Refresh") : tr("刷新过期", "Refresh stale")}
               icon="RefreshCw"
               size={compact ? "sm" : "md"}
               onPress={() => void manager.refreshStale()}
@@ -341,7 +348,7 @@ function Manager(props: PluginScreenProps) {
               testID="ppm-refresh-stale"
             />
             <Btn
-              label={compact ? "新建" : "新建连接"}
+              label={compact ? tr("新建", "New") : tr("新建连接", "New connection")}
               variant="primary"
               icon="Plus"
               size={compact ? "sm" : "md"}
@@ -358,8 +365,8 @@ function Manager(props: PluginScreenProps) {
               value={view}
               onChange={changeView}
               options={[
-                { value: "agents", label: "Agent 配置", count: snapshot?.agents.length },
-                { value: "library", label: "连接库", count: snapshot?.connections.length },
+                { value: "agents", label: tr("Agent 配置", "Agents"), count: snapshot?.agents.length },
+                { value: "library", label: tr("连接库", "Connections"), count: snapshot?.connections.length },
               ]}
               testID="ppm-view-tabs"
             />
@@ -369,11 +376,11 @@ function Manager(props: PluginScreenProps) {
         {autoRefreshError && !autoErrorDismissed ? (
           <Notice
             tone="warning"
-            title="自动刷新过期连接失败"
+            title={tr("自动刷新过期连接失败", "Refreshing stale connections failed")}
             action={
               <View style={{ flexDirection: "row", gap: 4 }}>
                 <Btn
-                  label="重试"
+                  label={tr("重试", "Retry")}
                   size="sm"
                   variant="ghost"
                   onPress={() => void manager.refreshStale()}
@@ -381,7 +388,7 @@ function Manager(props: PluginScreenProps) {
                 />
                 <IconBtn
                   icon="X"
-                  label="忽略刷新错误"
+                  label={tr("忽略刷新错误", "Dismiss refresh error")}
                   onPress={() => setAutoErrorDismissed(true)}
                 />
               </View>
@@ -394,8 +401,8 @@ function Manager(props: PluginScreenProps) {
         {loadError && snapshot ? (
           <Notice
             tone="danger"
-            title="同步最新数据失败"
-            action={<Btn label="重试" size="sm" variant="ghost" onPress={() => void manager.reload()} />}
+            title={tr("同步最新数据失败", "Syncing the latest data failed")}
+            action={<Btn label={tr("重试", "Retry")} size="sm" variant="ghost" onPress={() => void manager.reload()} />}
           >
             {loadError}
           </Notice>
@@ -405,18 +412,18 @@ function Manager(props: PluginScreenProps) {
       {loading && !snapshot ? (
         <View style={{ flex: 1, alignItems: "center", justifyContent: "center", gap: 10 }}>
           <Loading />
-          <Text style={t.small}>正在读取供应商配置…</Text>
+          <Text style={t.small}>{tr("正在读取供应商配置…", "Loading provider settings…")}</Text>
         </View>
       ) : !snapshot ? (
         <View style={{ flex: 1, padding: 20 }}>
           <Card style={{ padding: 0 }}>
             <EmptyState
               icon="CircleAlert"
-              title="无法加载供应商配置"
-              description={loadError ?? "服务端没有返回数据。"}
+              title={tr("无法加载供应商配置", "Cannot load provider settings")}
+              description={loadError ?? tr("服务端没有返回数据。", "The server returned no data.")}
               action={
                 <Btn
-                  label="重新加载"
+                  label={tr("重新加载", "Reload")}
                   variant="primary"
                   icon="RefreshCw"
                   onPress={() => void manager.reload()}
@@ -487,19 +494,25 @@ function Manager(props: PluginScreenProps) {
 
       <ConfirmDialog
         open={Boolean(deleteTarget)}
-        title="删除连接？"
+        title={tr("删除连接？", "Delete the connection?")}
         description={
           deleteTarget
-            ? `将永久删除 ${deleteTarget.name} 及其密钥。${
-                snapshot
-                  ? agentsUsing(snapshot, deleteTarget.id).length
-                    ? `这会同时从 ${agentsUsing(snapshot, deleteTarget.id).length} 个 Agent 移除该连接和模型选择。`
-                    : "当前没有 Agent 使用它。"
-                  : ""
-              }此操作无法撤销。`
+            ? (() => {
+                const using = snapshot ? agentsUsing(snapshot, deleteTarget.id).length : 0;
+                return tr(
+                  `将永久删除 ${deleteTarget.name} 及其密钥。${
+                    using ? `这会同时从 ${using} 个 Agent 移除该连接和模型选择。` : "当前没有 Agent 使用它。"
+                  }此操作无法撤销。`,
+                  `${deleteTarget.name} and its key will be deleted permanently. ${
+                    using
+                      ? `It is also removed from ${using} ${using === 1 ? "agent" : "agents"}, with their model selection.`
+                      : "No agent uses it."
+                  } This cannot be undone.`,
+                );
+              })()
             : ""
         }
-        confirmLabel="删除连接"
+        confirmLabel={tr("删除连接", "Delete connection")}
         pending={busy === "deleteConnection"}
         onConfirm={() => void confirmDelete()}
         onCancel={() => setDeleteTarget(null)}
@@ -510,12 +523,16 @@ function Manager(props: PluginScreenProps) {
 }
 
 function NoAgents({ snapshot }: { snapshot: Snapshot }) {
+  const { tr } = useTr();
   return (
     <Card style={{ padding: 0 }}>
       <EmptyState
         icon="Bot"
-        title="服务端没有返回 Agent"
-        description={`当前快照包含 ${snapshot.connections.length} 个连接，但没有任何 Agent 描述。请刷新或检查插件服务端。`}
+        title={tr("服务端没有返回 Agent", "The server returned no agents")}
+        description={tr(
+          `当前快照包含 ${snapshot.connections.length} 个连接，但没有任何 Agent 描述。请刷新或检查插件服务端。`,
+          `The snapshot has ${snapshot.connections.length} connections but no agent descriptions. Refresh or check the plugin server.`,
+        )}
       />
     </Card>
   );

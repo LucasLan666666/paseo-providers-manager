@@ -1,5 +1,9 @@
 import { defineRpc } from "@getpaseo/plugin";
 import { z } from "zod";
+import { langSchema } from "./i18n";
+
+/** The client's resolved language; optional so an older client still works. */
+const withLang = z.object({ lang: langSchema.optional() });
 
 export const agentIds = [
   "claude",
@@ -191,7 +195,7 @@ export type SettingChange = z.infer<typeof settingChange>;
 export type Probe = z.infer<typeof probe>;
 export const snapshotRpc = defineRpc({
   name: "manager.snapshot",
-  input: z.object({}),
+  input: withLang,
   output: snapshot,
 });
 const operation = z.object({
@@ -205,15 +209,15 @@ const operation = z.object({
 export type Operation = z.infer<typeof operation>;
 export const jobRpc = defineRpc({
   name: "manager.wait",
-  input: z.object({ job: z.uuid() }),
+  input: z.object({ job: z.uuid() }).extend(withLang.shape),
   output: operation,
 });
 export const actionRpc = defineRpc({
   name: "manager.action",
-  input: action,
+  input: action.and(withLang),
   output: operation,
 });
-const nativeInput = z.object({ agent, cwd: z.string().min(1).optional() });
+const nativeInput = z.object({ agent, cwd: z.string().min(1).optional() }).extend(withLang.shape);
 export const nativeCatalogRpc = defineRpc({
   name: "manager.native-models",
   input: nativeInput,

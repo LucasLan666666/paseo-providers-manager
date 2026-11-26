@@ -1,4 +1,5 @@
 import type { Protocol } from "./contracts";
+import type { Lang } from "./i18n";
 
 /**
  * User-facing protocol names, shared by the client and server messages.
@@ -12,22 +13,22 @@ export const protocolInfo: Readonly<
   chat: {
     label: "OpenAI Chat Completions",
     short: "OpenAI Chat",
-    endpoint: "POST {地址}/chat/completions",
+    endpoint: "POST {base}/chat/completions",
   },
   responses: {
     label: "OpenAI Responses",
     short: "OpenAI Responses",
-    endpoint: "POST {地址}/responses",
+    endpoint: "POST {base}/responses",
   },
   anthropic: {
     label: "Anthropic Messages",
     short: "Anthropic",
-    endpoint: "POST {主机}/v1/messages",
+    endpoint: "POST {host}/v1/messages",
   },
   gemini: {
     label: "Google Gemini",
     short: "Gemini",
-    endpoint: "POST {主机}/v1beta/models/{模型}:generateContent",
+    endpoint: "POST {host}/v1beta/models/{model}:generateContent",
   },
 };
 
@@ -36,4 +37,14 @@ export function counterpartProtocol(protocol: Protocol): Protocol | undefined {
   if (protocol === "chat") return "responses";
   if (protocol === "responses") return "chat";
   return undefined;
+}
+
+const PLACEHOLDERS: Record<Lang, Record<string, string>> = {
+  "zh-CN": { "{base}": "{地址}", "{host}": "{主机}", "{model}": "{模型}" },
+  en: { "{base}": "{base}", "{host}": "{host}", "{model}": "{model}" },
+};
+
+/** The request a gateway must serve, with placeholders in the reader's language. */
+export function protocolEndpoint(protocol: Protocol, lang: Lang): string {
+  return protocolInfo[protocol].endpoint.replace(/\{(base|host|model)\}/g, (token) => PLACEHOLDERS[lang][token] ?? token);
 }

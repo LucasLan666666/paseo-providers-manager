@@ -3,6 +3,7 @@ import type { PluginTheme } from "@getpaseo/plugin";
 import { Pressable, Text, TextInput, View } from "react-native";
 import { useState } from "react";
 import { nativeCatalogRpc, type AgentId } from "../shared/contracts";
+import { useTr } from "./ui";
 
 /**
  * Native providers (Muse, Hoplite, DSH) have no custom gateway connection.
@@ -25,31 +26,35 @@ function Catalog({ agent, theme }: { agent: AgentId; theme: PluginTheme }) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const color = theme.colors.foreground;
+  const { tr, lang } = useTr();
   async function testAll() {
     setBusy(true);
     setMessage("");
     try {
       const trimmedCwd = cwd.trim();
-      const input = { agent, ...(trimmedCwd ? { cwd: trimmedCwd } : {}) };
+      const input = { agent, lang, ...(trimmedCwd ? { cwd: trimmedCwd } : {}) };
       const list = await read(input);
       setModels(list);
       setMessage(
         list.length
-          ? `已检查 ${list.length} 个原生模型，目录可正常列出；未发送推理消息。`
-          : "此主机未返回可用模型。",
+          ? tr(
+              `已检查 ${list.length} 个原生模型，目录可正常列出；未发送推理消息。`,
+              `Checked ${list.length} native models; the list loads. No inference request was sent.`,
+            )
+          : tr("此主机未返回可用模型。", "This host returned no models."),
       );
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "原生目录不可用。");
+      setMessage(error instanceof Error ? error.message : tr("原生目录不可用。", "The native model list is unavailable."));
     } finally {
       setBusy(false);
     }
   }
   return (
     <View style={{ gap: 8 }}>
-      <Text style={{ color, fontWeight: "600" }}>原生账号模型</Text>
+      <Text style={{ color, fontWeight: "600" }}>{tr("原生账号模型", "Native account models")}</Text>
       <TextInput
-        accessibilityLabel="原生项目路径"
-        placeholder="主机上的项目绝对路径（可选）"
+        accessibilityLabel={tr("原生项目路径", "Native project path")}
+        placeholder={tr("主机上的项目绝对路径（可选）", "Absolute project path on the host (optional)")}
         placeholderTextColor={theme.colors.foregroundMuted}
         value={cwd}
         onChangeText={(v) => {
@@ -72,7 +77,7 @@ function Catalog({ agent, theme }: { agent: AgentId; theme: PluginTheme }) {
         style={{ padding: 8, alignSelf: "flex-start", opacity: busy ? 0.6 : 1 }}
       >
         <Text style={{ color: theme.colors.accent }}>
-          {busy ? "测试中…" : "测试全部模型"}
+          {busy ? tr("测试中…", "Testing…") : tr("测试全部模型", "Test all models")}
         </Text>
       </Pressable>
       {message ? <Text style={{ color }}>{message}</Text> : null}

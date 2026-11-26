@@ -2,6 +2,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Limits } from "../shared/contracts";
 import type { SavedConnection } from "./state";
+import { L } from "./i18n";
 
 export async function fxProvider(
   connection: SavedConnection,
@@ -15,7 +16,7 @@ export async function fxProvider(
   } as const;
   if (connection.protocol === "gemini")
     throw new Error(
-      "fx 需要 Chat Completions、Responses 或 Anthropic Messages 网关。",
+      L("fx 需要 Chat Completions、Responses 或 Anthropic Messages 网关。", "fx needs a Chat Completions, Responses or Anthropic Messages gateway."),
     );
   const settings = {
     provider: "managed",
@@ -41,7 +42,7 @@ export async function fxProvider(
   };
   const data = JSON.stringify(settings);
   if (Buffer.byteLength(data) > 65536)
-    throw new Error("fx 配置超过其 64 KiB 上限，请减少启用的模型。");
+    throw new Error(L("fx 配置超过其 64 KiB 上限，请减少启用的模型。", "The fx configuration exceeds its 64 KiB limit. Enable fewer models."));
   await writeFile(join(dir, "settings.json"), data, { mode: 0o600 });
   return {
     extends: "acp",

@@ -20,6 +20,7 @@ import {
   SearchField,
   useLayout,
   useTokens,
+  useTr,
   withAlpha,
 } from "./ui";
 
@@ -43,6 +44,7 @@ export function ConnectionLibrary({
   onOpenAgent: (agent: AgentId) => void;
 }) {
   const { theme, compact } = useLayout();
+  const { tr } = useTr();
   const t = useTokens(theme, compact);
   const [query, setQuery] = useState("");
   const normalized = query.trim().toLowerCase();
@@ -72,7 +74,7 @@ export function ConnectionLibrary({
       <SearchField
         value={query}
         onChangeText={setQuery}
-        placeholder="搜索名称、地址、目录供应商或模型"
+        placeholder={tr("搜索名称、地址、目录供应商或模型", "Search names, URLs, catalog providers or models")}
         testID="ppm-connection-search"
       />
 
@@ -80,10 +82,13 @@ export function ConnectionLibrary({
         <Card style={{ padding: 0 }}>
           <EmptyState
             icon="Server"
-            title="连接库为空"
-            description="添加一个 OpenAI Chat Completions、OpenAI Responses、Anthropic Messages 或 Google Gemini 网关连接，然后为 Agent 选择模型。"
+            title={tr("连接库为空", "No connections yet")}
+            description={tr(
+              "添加一个 OpenAI Chat Completions、OpenAI Responses、Anthropic Messages 或 Google Gemini 网关连接，然后为 Agent 选择模型。",
+              "Add an OpenAI Chat Completions, OpenAI Responses, Anthropic Messages or Google Gemini gateway, then choose models for an agent.",
+            )}
             action={
-              <Btn label="新建第一个连接" variant="primary" icon="Plus" onPress={onNew} />
+              <Btn label={tr("新建第一个连接", "Create the first connection")} variant="primary" icon="Plus" onPress={onNew} />
             }
           />
         </Card>
@@ -91,9 +96,9 @@ export function ConnectionLibrary({
         <Card style={{ padding: 0 }}>
           <EmptyState
             icon="Search"
-            title="没有匹配的连接"
-            description="换一个关键词，或者清空搜索查看全部连接。"
-            action={<Btn label="清空搜索" onPress={() => setQuery("")} />}
+            title={tr("没有匹配的连接", "No matching connections")}
+            description={tr("换一个关键词，或者清空搜索查看全部连接。", "Try another keyword, or clear the search to see all connections.")}
+            action={<Btn label={tr("清空搜索", "Clear search")} onPress={() => setQuery("")} />}
           />
         </Card>
       ) : (
@@ -135,6 +140,7 @@ function LibraryCard({
   onOpenAgent: (agent: AgentId) => void;
 }) {
   const { theme, compact } = useLayout();
+  const { tr, lang } = useTr();
   const t = useTokens(theme, compact);
   const now = Date.now();
   const agents = agentsUsing(snapshot, connection.id);
@@ -176,54 +182,57 @@ function LibraryCard({
             </Text>
             <Badge tone="accent" label={protocolLabel(connection.protocol)} />
             {connection.error ? (
-              <Badge tone="danger" label="刷新失败" icon="AlertTriangle" />
+              <Badge tone="danger" label={tr("刷新失败", "Refresh failed")} icon="AlertTriangle" />
             ) : stale ? (
-              <Badge tone="warning" label="数据过期" />
+              <Badge tone="warning" label={tr("数据过期", "Stale")} />
             ) : (
-              <Badge tone="success" label="已同步" />
+              <Badge tone="success" label={tr("已同步", "Synced")} />
             )}
             {connection.hasKey ? (
-              <Badge tone="success" label="有密钥" />
+              <Badge tone="success" label={tr("有密钥", "Key saved")} />
             ) : (
-              <Badge tone="warning" label="无密钥" />
+              <Badge tone="warning" label={tr("无密钥", "No key")} />
             )}
           </View>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
             <Text style={[t.mono, { flexShrink: 1 }]} numberOfLines={1}>
               {connection.url}
             </Text>
-            <CopyButton text={connection.url} label="复制地址" />
+            <CopyButton text={connection.url} label={tr("复制地址", "Copy URL")} />
           </View>
         </View>
         <View style={{ flexDirection: "row", gap: 1 }}>
-          <IconBtn icon="Pencil" label={`编辑 ${connection.name}`} onPress={onEdit} />
-          <IconBtn icon="Trash2" label={`删除 ${connection.name}`} tone="danger" onPress={onDelete} />
+          <IconBtn icon="Pencil" label={tr(`编辑 ${connection.name}`, `Edit ${connection.name}`)} onPress={onEdit} />
+          <IconBtn icon="Trash2" label={tr(`删除 ${connection.name}`, `Delete ${connection.name}`)} tone="danger" onPress={onDelete} />
         </View>
       </View>
 
       <View style={{ flexDirection: "row", gap: 6, flexWrap: "wrap" }}>
-        <Badge label={`已选 ${selectedTotal} / ${connection.models.length}`} icon="ListChecks" />
+        <Badge label={tr(`已选 ${selectedTotal} / ${connection.models.length}`, `${selectedTotal} / ${connection.models.length} selected`)} icon="ListChecks" />
         {connection.catalogProvider ? (
-          <Badge label={`目录 ${connection.catalogProvider}`} icon="Database" />
+          <Badge label={tr(`目录 ${connection.catalogProvider}`, `Catalog ${connection.catalogProvider}`)} icon="Database" />
         ) : null}
-        <Badge label={refreshLabel(connection.lastRefresh, now)} icon="Clock" />
+        <Badge label={refreshLabel(connection.lastRefresh, lang, now)} icon="Clock" />
       </View>
 
       {connection.error ? (
-        <Notice tone="danger" title="最近一次刷新失败">
+        <Notice tone="danger" title={tr("最近一次刷新失败", "The last refresh failed")}>
           {connection.error}
         </Notice>
       ) : stale ? (
-        <Notice tone="warning" title="目录可能已过期">
+        <Notice tone="warning" title={tr("目录可能已过期", "The model list may be stale")}>
           {connection.lastRefresh
-            ? `上次刷新：${formatRelativeTime(connection.lastRefresh, now)}。`
-            : "尚未成功刷新过。"}
-          建议刷新后再为 Agent 选择模型。
+            ? tr(
+                `上次刷新：${formatRelativeTime(connection.lastRefresh, lang, now)}。`,
+                `Last refreshed ${formatRelativeTime(connection.lastRefresh, lang, now)}. `,
+              )
+            : tr("尚未成功刷新过。", "Never refreshed successfully. ")}
+          {tr("建议刷新后再为 Agent 选择模型。", "Refresh before choosing models for an agent.")}
         </Notice>
       ) : null}
 
       <View style={{ gap: 6 }}>
-        <Text style={t.small}>使用此连接的 Agent</Text>
+        <Text style={t.small}>{tr("使用此连接的 Agent", "Agents using this connection")}</Text>
         {agents.length ? (
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
             {agents.map((agentId) => {
@@ -241,17 +250,28 @@ function LibraryCard({
             })}
           </View>
         ) : (
-          <Text style={t.tiny}>尚未被任何 Agent 使用。在可用的 Agent 页面点击“添加连接”即可复用。</Text>
+          <Text style={t.tiny}>
+            {tr(
+              "尚未被任何 Agent 使用。在可用的 Agent 页面点击“添加连接”即可复用。",
+              "No agent uses it yet. Use “Add connection” on a compatible agent's page to reuse it.",
+            )}
+          </Text>
         )}
         <Text style={t.tiny}>
-          可用于：{usable.map((agent) => agent.label).join(" · ") || "无"}
+          {tr("可用于：", "Works with: ")}
+          {usable.map((agent) => agent.label).join(" · ") || tr("无", "none")}
         </Text>
         {blocked.length ? (
           <Text style={t.tiny}>
-            不适用：
+            {tr("不适用：", "Not for: ")}
             {blocked
-              .map((agent) => `${agent.label}（需 ${agent.protocols.map(protocolLabel).join(" / ")}）`)
-              .join("，")}
+              .map((agent) =>
+                tr(
+                  `${agent.label}（需 ${agent.protocols.map(protocolLabel).join(" / ")}）`,
+                  `${agent.label} (needs ${agent.protocols.map(protocolLabel).join(" / ")})`,
+                ),
+              )
+              .join(tr("，", ", "))}
           </Text>
         ) : null}
       </View>
@@ -268,7 +288,7 @@ function LibraryCard({
         }}
       >
         <Btn
-          label={refreshing ? "刷新中…" : "刷新目录"}
+          label={refreshing ? tr("刷新中…", "Refreshing…") : tr("刷新目录", "Refresh models")}
           icon="RefreshCw"
           onPress={onRefresh}
           pending={refreshing}
@@ -276,7 +296,7 @@ function LibraryCard({
           testID={`ppm-library-refresh-${connection.id}`}
         />
         <Btn
-          label={testing ? "测试中…" : "测试全部模型"}
+          label={testing ? tr("测试中…", "Testing…") : tr("测试全部模型", "Test all models")}
           icon="Activity"
           onPress={onTest}
           pending={testing}

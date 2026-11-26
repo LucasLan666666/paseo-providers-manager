@@ -10,8 +10,11 @@ import {
   jobRpc,
   snapshotRpc,
   nativeCatalogRpc,
+  type Action,
+  type AgentId,
 } from "./shared/contracts";
 import type { PaseoApi } from "./server/types";
+import { L, withLang } from "./server/i18n";
 
 const ICON_TTL_MS = 10 * 60 * 1000;
 const ICON_WAIT_MS = 1500;
@@ -65,26 +68,37 @@ export default function contribute(server: PluginServerContext) {
     join(home, "plugin-data", "paseo-providers-manager"),
   );
   const jobs = new Jobs();
-  server.handle(jobRpc, ({ job }) => jobs.wait(job));
-  server.handle(snapshotRpc, async (_input, { paseo }) => ({
-    ...(await manager.snapshot(paseo)),
-    icons: await agentIcons(paseo),
-  }));
-  server.handle(actionRpc, (action, { paseo }) =>
-    jobs.start(manager.action(action, paseo)),
+  // Every handler runs in the language the client asked for (server/i18n.ts).
+  server.handle(jobRpc, ({ job, lang }) => withLang(lang, () => jobs.wait(job)));
+  server.handle(snapshotRpc, ({ lang }, { paseo }) =>
+    withLang(lang, async () => ({
+      ...(await manager.snapshot(paseo)),
+      icons: await agentIcons(paseo),
+    })),
   );
-  server.handle(nativeCatalogRpc, async ({ agent, cwd }, { paseo }) => {
-    if (cwd && (!isAbsolute(cwd) || !(await stat(cwd)).isDirectory()))
-      throw new Error("请输入现有项目的绝对路径。");
-    const result = await paseo.providers.listModels(agent, { cwd });
-    if (result.error)
-      throw new Error(
-        `原生目录不可用：${String(result.error).slice(0, 300)}`,
-      );
-    return (result.models ?? []).map(({ id, label }) => ({
-      id,
-      label: label || id,
-    }));
-  });
+  server.handle(actionRpc, ({ lang, ...action }, { paseo }) =>
+    withLang(lang, () => jobs.start(manager.action(action as Action, paseo))),
+  );
+  server.handle(nativeCatalogRpc, ({ agent, cwd, lang }, { paseo }) =>
+    withLang(lang, () => nativeModels(agent, cwd, paseo)),
+  );
   return () => jobs.dispose();
+}
+
+async function nativeModels(agent: AgentId, cwd: string | undefined, paseo: PaseoApi) {
+  // stat() rejects with Node's English ENOENT for a missing path; report it plainly.
+  const isDirectory = cwd
+    ? await stat(cwd).then((info) => info.isDirectory(), () => false)
+    : true;
+  if (cwd && (!isAbsolute(cwd) || !isDirectory))
+    throw new Error(L("请输入现有项目的绝对路径。", "Enter the absolute path of an existing project."));
+  const result = await paseo.providers.listModels(agent, { cwd });
+  if (result.error)
+    throw new Error(
+      L("原生目录不可用：", "The native model list is unavailable: ") + String(result.error).slice(0, 300),
+    );
+  return (result.models ?? []).map(({ id, label }) => ({
+    id,
+    label: label || id,
+  }));
 }

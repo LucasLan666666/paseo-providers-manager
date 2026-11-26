@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import type { Action, Operation, SettingChange } from "../shared/contracts";
 import { limitIssue, resolveModel } from "../shared/limits";
 import { protocolInfo } from "../shared/protocols";
-import { agents } from "./agents";
+import { agents, localizedAgents } from "./agents";
 import { discover, fetchCatalog } from "./catalog";
 import { enrichModels } from "./match";
 import { probeModels } from "./probe";
@@ -18,17 +18,26 @@ import {
   type State,
 } from "./state";
 import { Storage } from "./storage";
+import { count, L } from "./i18n";
 
 const DAY = 24 * 60 * 60 * 1000;
 
-const KIND_LABELS: Record<string, string> = {
-  embedding: "嵌入模型",
-  reranking: "重排模型",
-  image: "图像模型",
-  audio: "语音模型",
-  video: "视频模型",
-  other: "非对话模型",
-};
+function kindLabel(kind: string | undefined): string {
+  switch (kind) {
+    case "embedding":
+      return L("嵌入模型", "an embedding model");
+    case "reranking":
+      return L("重排模型", "a reranking model");
+    case "image":
+      return L("图像模型", "an image model");
+    case "audio":
+      return L("语音模型", "an audio model");
+    case "video":
+      return L("视频模型", "a video model");
+    default:
+      return L("非对话模型", "not a chat model");
+  }
+}
 
 async function refresh(conn: SavedConnection) {
   try {
@@ -39,7 +48,7 @@ async function refresh(conn: SavedConnection) {
     if (catalog) enrichModels(models, catalog, { provider: conn.catalogProvider || undefined });
     mergeCatalog(conn, models);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "目录请求失败";
+    const message = error instanceof Error ? error.message : L("目录请求失败", "Model list request failed");
     conn.error = conn.key
       ? message.replaceAll(conn.key, "••••").slice(0, 300)
       : message.slice(0, 300);
@@ -61,20 +70,33 @@ export function validateConnection(state: State, connection: SavedConnection) {
       if (!descriptor) continue;
       if (!descriptor.protocols.includes(connection.protocol)) {
         issues.add(
-          `${descriptor.label} 不支持该连接的 ${protocolInfo[connection.protocol].label} 协议`,
+          L(
+            `${descriptor.label} 不支持该连接的 ${protocolInfo[connection.protocol].label} 协议`,
+            `${descriptor.label} does not support this connection's ${protocolInfo[connection.protocol].label} protocol`,
+          ),
         );
         continue;
       }
       if (!binding.selected.includes(model.id)) continue;
-      if (!model.listed) issues.add(`${name}：网关目录未列出`);
+      if (!model.listed) issues.add(L(`${name}：网关目录未列出`, `${name}: no longer listed by the gateway`));
       if (binding.agent === "antigravity" && antigravityPickerId(model.id) === undefined)
-        issues.add(`${name}：无法映射到 agy 内置模型`);
+        issues.add(L(`${name}：无法映射到 agy 内置模型`, `${name}: cannot be mapped to an agy built-in model`));
       const resolved = resolveModel(connection, model);
       if (!resolved.chat)
-        issues.add(`${name}：${KIND_LABELS[model.kind ?? "other"]}，不能用于对话`);
+        issues.add(
+          L(
+            `${name}：${kindLabel(model.kind)}，不能用于对话`,
+            `${name}: ${kindLabel(model.kind)}, cannot be used for chat`,
+          ),
+        );
       const issue = limitIssue(resolved);
       if (issue)
-        issues.add(`${name}：最大输出 ${issue.output} 必须小于上下文窗口 ${issue.context}`);
+        issues.add(
+          L(
+            `${name}：最大输出 ${issue.output} 必须小于上下文窗口 ${issue.context}`,
+            `${name}: max output ${issue.output} must be smaller than the context window ${issue.context}`,
+          ),
+        );
     }
   }
   return [...issues];
@@ -84,7 +106,7 @@ export function validateConnection(state: State, connection: SavedConnection) {
 function applyChanges(conn: SavedConnection, changes: readonly SettingChange[]) {
   for (const change of changes) {
     const model = conn.models.find((m) => m.id === change.model);
-    if (!model) throw new Error("找不到对应模型。");
+    if (!model) throw new Error(L("找不到对应模型。", "Model not found."));
     const row = { ...(conn.settings?.[model.id] ?? {}) };
     if (change.value === null) delete row[change.field];
     else if (typeof change.value === "number") {
@@ -104,14 +126,19 @@ function applyChanges(conn: SavedConnection, changes: readonly SettingChange[]) 
     const issue = limitIssue(resolveModel(conn, model));
     if (issue)
       throw new Error(
-        `${model.id} 的最大输出 ${issue.output} 必须小于上下文窗口 ${issue.context}。`,
+        L(
+          `${model.id} 的最大输出 ${issue.output} 必须小于上下文窗口 ${issue.context}。`,
+          `${model.id}: max output ${issue.output} must be smaller than the context window ${issue.context}.`,
+        ),
       );
   }
 }
 
 function setFallback(conn: SavedConnection, context?: number, output?: number) {
   if (context !== undefined && output !== undefined && output >= context)
-    throw new Error("兜底的最大输出必须小于兜底上下文窗口。");
+    throw new Error(
+      L("兜底的最大输出必须小于兜底上下文窗口。", "The fallback max output must be smaller than the fallback context window."),
+    );
   conn.fallback =
     context === undefined && output === undefined ? undefined : { context, output };
 }
@@ -135,10 +162,10 @@ export class Manager {
   }
   snapshot(paseo: PaseoApi) {
     if (this.committed)
-      return Promise.resolve(snapshotOf(this.committed, agents));
+      return Promise.resolve(snapshotOf(this.committed, localizedAgents()));
     return this.serial(async () => {
       this.committed = await this.storage.load(paseo);
-      return snapshotOf(this.committed, agents);
+      return snapshotOf(this.committed, localizedAgents());
     });
   }
 
@@ -151,7 +178,7 @@ export class Manager {
     const conn = findConnection(state, action.connection);
     const known = new Set(conn.models.map((model) => model.id));
     const models = action.models.filter((id) => known.has(id));
-    if (!models.length) throw new Error("没有可测试的模型，请刷新连接后重试。");
+    if (!models.length) throw new Error(L("没有可测试的模型，请刷新连接后重试。", "No models to test. Refresh the connection and try again."));
     const results = await probeModels(conn, models);
     return this.serial(async (): Promise<Omit<Operation, "job">> => {
       const current = await this.storage.load(paseo);
@@ -163,8 +190,14 @@ export class Manager {
       const failed = Object.values(results).filter((result) => !result.ok).length;
       const total = Object.keys(results).length;
       return failed
-        ? { message: `已测试 ${total} 个模型：${total - failed} 个可用，${failed} 个失败。`, level: "warning" }
-        : { message: `已测试 ${total} 个模型，全部可用。` };
+        ? {
+            message: L(
+              `已测试 ${total} 个模型：${total - failed} 个可用，${failed} 个失败。`,
+              `Tested ${count(total, "model", "models")}: ${total - failed} working, ${failed} failed.`,
+            ),
+            level: "warning",
+          }
+        : { message: L(`已测试 ${total} 个模型，全部可用。`, `Tested ${count(total, "model", "models")}, all working.`) };
     });
   }
 
@@ -174,7 +207,7 @@ export class Manager {
       const current = await this.storage.load(paseo);
       this.committed = current;
       const next = structuredClone(current);
-      let message = "已保存";
+      let message = L("已保存", "Saved");
       let level: Operation["level"];
       let savedConnection: string | undefined;
       let testIssues = false;
@@ -188,16 +221,22 @@ export class Manager {
           }
           const issues = validateConnection(next, conn);
           if (conn.models.length === 0) {
-            message = "目录没有模型，请检查网关的模型列表。";
+            message = L("目录没有模型，请检查网关的模型列表。", "The gateway listed no models. Check its model list.");
             level = "warning";
           } else if (issues.length === 0)
-            message = `已检查 ${conn.models.length} 个模型，全部通过。`;
+            message = L(
+              `已检查 ${conn.models.length} 个模型，全部通过。`,
+              `Checked ${count(conn.models.length, "model", "models")}, all passed.`,
+            );
           else {
             testIssues = true;
             message =
-              `已检查 ${conn.models.length} 个模型，发现 ${issues.length} 个问题：\n` +
+              L(
+                `已检查 ${conn.models.length} 个模型，发现 ${issues.length} 个问题：\n`,
+                `Checked ${count(conn.models.length, "model", "models")}, found ${count(issues.length, "problem", "problems")}:\n`,
+              ) +
               issues.slice(0, 8).join("\n") +
-              (issues.length > 8 ? `\n…另有 ${issues.length - 8} 个问题` : "");
+              (issues.length > 8 ? L(`\n…另有 ${issues.length - 8} 个问题`, `\n…and ${issues.length - 8} more`) : "");
             level = "warning";
           }
           break;
@@ -205,9 +244,11 @@ export class Manager {
         case "saveConnection": {
           const url = new URL(action.url);
           if (url.username || url.password || url.hash || url.search)
-            throw new Error("网关地址不能包含凭据、查询参数或片段。");
+            throw new Error(
+              L("网关地址不能包含凭据、查询参数或片段。", "The gateway URL cannot contain credentials, a query or a fragment."),
+            );
           const name = action.name.trim();
-          if (!name) throw new Error("请输入连接名称。");
+          if (!name) throw new Error(L("请输入连接名称。", "Enter a connection name."));
           const conn: SavedConnection = action.id
             ? findConnection(next, action.id)
             : {
@@ -228,7 +269,9 @@ export class Manager {
             new URL(conn.url).origin !== url.origin &&
             !action.key
           ) {
-            throw new Error("网关域名或端口变更，请为新地址重新输入 Key。");
+            throw new Error(
+              L("网关域名或端口变更，请为新地址重新输入 Key。", "The gateway host or port changed. Enter the key again for the new address."),
+            );
           }
           // A copied connection may reuse the source key, but only for the same
           // origin: the key must never be sent to a host it was not saved for.
@@ -236,7 +279,9 @@ export class Manager {
           if (!action.id && action.copyKeyFrom && !action.key) {
             const source = findConnection(next, action.copyKeyFrom);
             if (new URL(source.url).origin !== url.origin)
-              throw new Error("复制的连接更换了域名或端口，请重新输入 Key。");
+              throw new Error(
+                L("复制的连接更换了域名或端口，请重新输入 Key。", "The copy uses another host or port. Enter its key."),
+              );
             copiedKey = source.key;
           }
           if (
@@ -245,7 +290,9 @@ export class Manager {
               (b) => b.connection === conn.id && b.selected.length,
             )
           )
-            throw new Error("请先停用使用该连接的模型，再切换协议。");
+            throw new Error(
+              L("请先停用使用该连接的模型，再切换协议。", "Turn off the models that use this connection before switching the protocol."),
+            );
           const protocolChanged = action.id !== undefined && conn.protocol !== action.protocol;
           const previousTarget = `${conn.url}|${conn.protocol}|${conn.key}`;
           Object.assign(conn, {
@@ -272,9 +319,9 @@ export class Manager {
           savedConnection = conn.id;
           await refresh(conn);
           if (conn.error) {
-            message = "连接已保存，目录加载失败：" + conn.error;
+            message = L("连接已保存，目录加载失败：", "Connection saved, but loading its models failed: ") + conn.error;
             level = "warning";
-          } else message = "连接已保存，模型目录已更新。";
+          } else message = L("连接已保存，模型目录已更新。", "Connection saved and its models updated.");
           break;
         }
         case "deleteConnection":
@@ -291,17 +338,20 @@ export class Manager {
           await refresh(conn);
           message =
             conn.error ??
-            `已拉取 ${conn.models.filter((m) => m.listed).length} 个模型。`;
+            L(
+              `已拉取 ${conn.models.filter((m) => m.listed).length} 个模型。`,
+              `Fetched ${count(conn.models.filter((m) => m.listed).length, "model", "models")}.`,
+            );
           break;
         }
         case "refreshStale": {
           const stale = next.connections.filter(
             (c) => !c.lastRefresh || Date.now() - c.lastRefresh >= DAY,
           );
-          if (!stale.length) return { message: "目录已是最新" };
+          if (!stale.length) return { message: L("目录已是最新", "Model lists are up to date") };
           await Promise.all(stale.map((c) => refresh(c)));
           const failed = stale.filter((c) => c.error).length;
-          message = `已检查 ${stale.length} 个连接，失败 ${failed} 个。`;
+          message = L(`已检查 ${stale.length} 个连接，失败 ${failed} 个。`, `Checked ${count(stale.length, "connection", "connections")}, ${failed} failed.`);
           if (failed) level = "warning";
           break;
         }
@@ -315,7 +365,12 @@ export class Manager {
           for (const [index, agentId] of targets.entries()) {
             const descriptor = agents.find((a) => a.id === agentId);
             if (!descriptor?.protocols.includes(conn.protocol))
-              throw new Error(`${descriptor?.label ?? agentId} 不支持此连接的协议。`);
+              throw new Error(
+                L(
+                  `${descriptor?.label ?? agentId} 不支持此连接的协议。`,
+                  `${descriptor?.label ?? agentId} does not support this connection's protocol.`,
+                ),
+              );
             const binding = getBinding(next, agentId, conn.id);
             binding.selected = [...selected];
             if (index > 0) {
@@ -331,7 +386,8 @@ export class Manager {
             } else if (binding.default && !selected.includes(binding.default)) delete binding.default;
             primaryDefault = binding.default;
           }
-          if (targets.length > 1) message = `已更新 ${targets.length} 个 Agent 的模型配置`;
+          if (targets.length > 1)
+            message = L(`已更新 ${targets.length} 个 Agent 的模型配置`, `Updated the models of ${count(targets.length, "agent", "agents")}`);
           break;
         }
         case "settings":
@@ -355,7 +411,9 @@ export class Manager {
               changes.push({ model: model.id, field: "output", value: suggestion.output });
           }
           applyChanges(conn, changes);
-          message = changes.length ? `已采用 ${changes.length} 个推荐值。` : "没有待确认的推荐值。";
+          message = changes.length
+            ? L(`已采用 ${changes.length} 个推荐值。`, `Adopted ${count(changes.length, "suggested value", "suggested values")}.`)
+            : L("没有待确认的推荐值。", "No suggested values to confirm.");
           break;
         }
         case "markSeen": {
@@ -373,7 +431,12 @@ export class Manager {
         // refreshed catalog is not saved, so the working configuration stays.
         if (action.type === "testConnection" && testIssues)
           return {
-            message: `${message}\n（因存在以上问题，本次获取的目录未保存，现有配置保持不变。）`,
+            message:
+              message +
+              L(
+                "\n（因存在以上问题，本次获取的目录未保存，现有配置保持不变。）",
+                "\n(Because of these problems the fetched model list was not saved; the current configuration is unchanged.)",
+              ),
             level: "warning",
           };
         throw error;

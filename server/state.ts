@@ -11,6 +11,7 @@ import {
   orderedSelection,
   resolveModel,
 } from "../shared/limits";
+import { L } from "./i18n";
 
 export interface SavedConnection extends Connection {
   key: string;
@@ -47,7 +48,7 @@ export function initialState(): State {
  */
 export function migrateState(raw: StateV1 | State): State {
   if (raw.version === 2) return raw;
-  if (raw.version !== 1) throw new Error("此管理器数据版本无法读取。");
+  if (raw.version !== 1) throw new Error(L("此管理器数据版本无法读取。", "This version of the manager data cannot be read."));
   // lastRefresh = null makes every connection stale, so the automatic refresh
   // on the next page open runs the models.dev name matching before the configs
   // are regenerated (without it they would start on the 128K / 16K fallback).
@@ -85,7 +86,7 @@ export function migrateState(raw: StateV1 | State): State {
 
 export function findConnection(state: State, id: string) {
   const connection = state.connections.find((item) => item.id === id);
-  if (!connection) throw new Error("找不到连接，请刷新管理页。");
+  if (!connection) throw new Error(L("找不到连接，请刷新管理页。", "Connection not found. Refresh the page."));
   return connection;
 }
 export function getBinding(state: State, agent: AgentId, connection: string) {
@@ -109,7 +110,7 @@ export function mergeCatalog(
   const result = new Map<string, Model>();
   for (const model of models) {
     if (Object.hasOwn(Object.prototype, model.id) || model.id === "prototype")
-      throw new Error("目录包含无效模型 ID。");
+      throw new Error(L("目录包含无效模型 ID。", "The model list contains an invalid model id."));
     const before = previous.get(model.id);
     // A gateway may omit limits on a later refresh, and the optional catalog
     // enrichment can be unavailable. Keep the last known values instead of
@@ -155,12 +156,15 @@ export function resolvedModels(state: State, binding: Binding) {
   const catalogue = new Map(connection.models.map((model) => [model.id, model]));
   return orderedSelection(binding, connection).map((id) => {
     const model = catalogue.get(id);
-    if (!model) throw new Error("所选模型已变化，请刷新列表。");
+    if (!model) throw new Error(L("所选模型已变化，请刷新列表。", "The selected models changed. Refresh the list."));
     const resolved = resolveModel(connection, model);
     const issue = limitIssue(resolved);
     if (issue)
       throw new Error(
-        `${model.id} 的最大输出 ${issue.output} 必须小于上下文窗口 ${issue.context}，请修正手动值。`,
+        L(
+          `${model.id} 的最大输出 ${issue.output} 必须小于上下文窗口 ${issue.context}，请修正手动值。`,
+          `${model.id}: max output ${issue.output} must be smaller than the context window ${issue.context}. Fix the manual value.`,
+        ),
       );
     return {
       id,

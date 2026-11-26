@@ -10,6 +10,7 @@ import { GATEWAY_KEY_ENV } from "./adapter-common";
 import { fxProvider } from "./fx";
 import { agents } from "./agents";
 import { findConnection, resolvedModels, type State } from "./state";
+import { L } from "./i18n";
 
 /** Unreferenced generation directories are kept briefly for running sessions. */
 const GENERATION_GRACE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -34,7 +35,10 @@ function plan(state: State, options: { lenient?: boolean; codexSalt?: string } =
       const agent = agents.find((item) => item.id === binding.agent)!;
       if (!agent.protocols.includes(conn.protocol))
         throw new Error(
-          `${agent.label} 无法使用此网关协议，请先取消该连接上的模型选择。`,
+          L(
+            `${agent.label} 无法使用此网关协议，请先取消该连接上的模型选择。`,
+            `${agent.label} cannot use this gateway protocol. Clear its model selection on this connection first.`,
+          ),
         );
       const models = resolvedModels(state, binding);
       // The generated Codex catalog starts from the installed Codex's built-in
@@ -115,7 +119,9 @@ export async function preparePatch(
     const entry = config.providers[alias];
     const env = entry?.env as Record<string, string> | undefined;
     if (entry && env?.PPM_OWNER !== next.owner)
-      throw new Error("同名 Paseo provider 已存在，无法覆盖其他配置。");
+      throw new Error(
+        L("同名 Paseo provider 已存在，无法覆盖其他配置。", "A Paseo provider with the same name exists and is not managed by this plugin."),
+      );
   }
   const providers: NonNullable<ProviderPatch["providers"]> = {};
   const dirs: string[] = [];
@@ -128,7 +134,7 @@ export async function preparePatch(
       const dir = await mkdtemp(join(base, "config-"));
       dirs.push(dir);
       if (binding.agent === "hoplite")
-        throw new Error("Hoplite 仅提供云项目的原生模型。");
+        throw new Error(L("Hoplite 仅提供云项目的原生模型。", "Hoplite only offers the native models of its cloud project."));
       const settings =
         binding.agent === "fx"
           ? await fxProvider(conn, models, dir)

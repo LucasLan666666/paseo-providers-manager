@@ -13,6 +13,7 @@ import { ompProvider, piProvider } from "./adapter-pi";
 import { antigravityProvider } from "./adapter-antigravity";
 import { museProvider } from "./adapter-muse";
 import type { CodexModelInfo } from "./codex-catalog";
+import { L } from "./i18n";
 
 export type { AdapterModel, AdapterConnection, BuiltProvider, ProviderModelChoice } from "./adapter-common";
 
@@ -54,7 +55,7 @@ export async function buildProvider(
       return museProvider(connection, models, dir);
     default: {
       const exhaustive: never = agent;
-      throw new Error(`未知 agent：${String(exhaustive)}`);
+      throw new Error(L(`未知 agent：${String(exhaustive)}`, `Unknown agent: ${String(exhaustive)}`));
     }
   }
 }

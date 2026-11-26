@@ -1,20 +1,40 @@
 # Providers Manager
 
-Providers Manager 从 Paseo 侧边栏打开：选择 agent，添加或复用网关连接，勾选要放入新建会话选择器的模型。每个 agent 有自己的启用列表、模型修正值和默认限额。共享连接上的地址或密钥变更会用于引用它的配置。
+Open Providers Manager from the Paseo sidebar: pick an agent, add or reuse a gateway connection, and choose which models appear in the new-session picker. Each model's context window, max output and capabilities (reasoning, image input, tool calls) are stored on the connection and shared by every agent that uses it; the model selection and default model belong to each agent. Changing a shared connection's URL or key updates every configuration that uses it.
 
-需要 Paseo 0.17.4 或更新的兼容版本，并在 daemon 所在主机安装相应 CLI。管理页会显示每个 agent 的接入方式：
+Requires Paseo 0.17.4 or a later compatible version, with each agent's CLI installed on the daemon host. The manager shows how each agent connects:
 
-- **Claude Code**：Anthropic Messages 网关。
-- **Codex**：OpenAI Responses 网关。
-- **GitHub Copilot**：Chat Completions、Responses 或 Anthropic Messages 网关，通过 Copilot CLI 的 providers 配置。
-- **OpenCode**：Chat Completions、Responses 或 Anthropic Messages 网关，逐模型写入上下文窗口和最大输出。
-- **Pi / Oh My Pi**：Chat Completions、Responses 或 Anthropic Messages 网关，逐模型写入上下文窗口和最大输出；缺少这两项时不能启用。
-- **Antigravity**：Gemini 兼容网关 + 原生 agy ACP 会话。agy ACP 的模型选择器只接受它内置的模型名（例如 `gemini-4-argon`、`gemini-3.1-pro`，可带 `-low/-medium/-high/-xhigh`）；插件会把网关模型映射到这些名称，其他模型名无法通过 ACP 选择。agy 自身的辅助请求也会经过同一网关。
-- **fx**：Chat Completions、Responses 或 Anthropic Messages 网关，写入 fx 的 `settings.json`。
-- **Muse Code / Hoplite**：没有可验证的自定义推理网关接口，只能检查并使用各自账号的模型目录。
+- **Claude Code**: Anthropic Messages gateway. Limits are written only for models Claude Code doesn't know, or for manual values.
+- **Codex**: OpenAI Responses gateway. Models in Codex's built-in table keep its own limits; unknown models of a known family, and manual values, go into a generated model catalog.
+- **GitHub Copilot**: Chat Completions, Responses or Anthropic Messages gateway, through the Copilot CLI's providers file.
+- **OpenCode**: Chat Completions, Responses or Anthropic Messages gateway, with per-model context window, max output and capabilities.
+- **Pi / Oh My Pi**: Chat Completions, Responses or Anthropic Messages gateway, with per-model context window, max output and capabilities.
+- **Antigravity**: Gemini-compatible gateway plus native agy ACP sessions. agy's ACP model picker only accepts its built-in names (for example `gemini-4-argon` or `gemini-3.1-pro`, optionally with `-low/-medium/-high/-xhigh`); gateway models are mapped onto them.
+- **fx**: Chat Completions, Responses or Anthropic Messages gateway, written to fx's `settings.json`.
+- **Muse Code / Hoplite**: no verifiable custom inference gateway; only their own account model lists can be checked and used.
 
-保存连接时会获取完整模型目录。打开页面时会刷新超过 24 小时的目录，也可手动刷新。插件优先使用网关提供的参数，缺少的字段按服务商和模型 ID 从 models.dev 精确匹配。自定义地址可指定目录供应商 ID。无可靠匹配的字段保留为空，可填写 agent 默认值或手动修正。手填值与新获取的数据冲突时，可比较两个值再选择。已启用的模型从目录消失后仍然可用，页面会标记其状态。
+Gateway URLs are used exactly as entered; the plugin never adds `/v1` for you.
 
-「测试全部模型」只重新读取模型目录并校验模型参数，不会创建会话或发送推理消息，因此不消耗模型 token。启用的组合会在 Paseo 中生成独立的 provider，名称包含 agent 和连接名称。生成目录在配置变化后保留一段时间，避免正在运行的会话立即失去配置；之后由插件清理。
+## Context window and max output
 
-连接密钥以明文保存于 daemon 主机的受限数据目录 `$PASEO_HOME/plugin-data/paseo-providers-manager/`，相应 CLI 的启动配置也可能在 Paseo 配置或生成的本地文件中包含密钥。已保存的密钥不会返回管理页。网关收到目录请求和所选 agent 发出的模型请求。公共目录请求使用独立的无凭据连接。首版独立存储数据，不导入 Model Providers 的旧配置。
+When a connection is saved or refreshed, the plugin reads the gateway's model list and matches each model by name on [models.dev](https://models.dev), preferring the vendor's own entry:
+
+- Exact matches are used directly, with their source shown.
+- Guesses from related models, unpublished output limits and values found only in third-party catalogs are marked “to confirm”; adopt them one by one or all at once.
+- OpenAI models default to the 272K price tier; the full window can be chosen per model.
+- Embedding, reranking, image and other non-chat models are greyed out and cannot be selected.
+- Models no source knows use the connection's fallback (128K / 16K by default).
+
+Manual values win; when an online value changes later, you can compare both and choose. An automatic max output never reaches the context window.
+
+## Testing
+
+“Test all models” re-reads the model list and checks the values the generated configuration will use. It sends no inference requests and uses no tokens. “Send test requests” in the model sheet sends one tiny request to each selected chat model and shows the result on each model.
+
+## Language
+
+Under Settings → Plugins → Providers Manager, choose “Follow Paseo”, “简体中文” or “English”. The choice is stored on the current device.
+
+## Data and security
+
+Connection keys are stored in plain text in the restricted data directory `$PASEO_HOME/plugin-data/paseo-providers-manager/` on the daemon host, and each CLI's launch configuration may also contain the key in Paseo's config or in generated local files. Saved keys are never returned to the manager page. A gateway receives model-list requests, test requests and the model requests of the agents you enable; a copied connection reuses the original key only for the same host and port. models.dev requests go out without credentials. Each enabled combination becomes its own Paseo provider, named after the agent and connection; generated directories are kept for a while after a change so running sessions keep their configuration, then the plugin cleans them up.

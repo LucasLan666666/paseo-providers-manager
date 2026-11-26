@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Operation } from "../shared/contracts";
+import { L } from "./i18n";
 
 type Outcome = Omit<Operation, "job">;
 type Result = { value: Outcome } | { error: string };
@@ -15,7 +16,7 @@ export class Jobs {
     const outcome = work.then(
       (value) => ({ value }),
       (error) => ({
-        error: error instanceof Error ? error.message : "操作失败。",
+        error: error instanceof Error ? error.message : L("操作失败。", "The operation failed."),
       }),
     );
     this.jobs.set(id, { outcome, until: Infinity });
@@ -27,7 +28,9 @@ export class Jobs {
   }
   async wait(id: string): Promise<Operation> {
     const job = this.jobs.get(id);
-    if (!job) throw new Error("操作已结束或插件已重载，请刷新管理页。");
+    if (!job) throw new Error(
+        L("操作已结束或插件已重载，请刷新管理页。", "The operation has ended or the plugin was reloaded. Refresh the page."),
+      );
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const result = await Promise.race([
@@ -36,7 +39,7 @@ export class Jobs {
           timer = setTimeout(() => resolve(null), 4000);
         }),
       ]);
-      if (!result) return { job: id, message: "处理中" };
+      if (!result) return { job: id, message: L("处理中", "Working") };
       if ("error" in result) throw new Error(result.error);
       return result.value;
     } finally {

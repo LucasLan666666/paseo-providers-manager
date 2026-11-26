@@ -47,33 +47,45 @@ import {
   TextField,
   useLayout,
   useTokens,
+  useTr,
   withAlpha,
+  type Translate,
 } from "./ui";
+import type { Lang } from "../shared/i18n";
 
 type FilterTab = "all" | "selected" | "issues";
 type CapsDraft = Record<string, Partial<Record<CapabilityField, boolean>>>;
 
-const CAPABILITIES: Array<{ field: CapabilityField; label: string; icon: string }> = [
-  { field: "reasoning", label: "推理", icon: "Brain" },
-  { field: "image", label: "图片输入", icon: "Image" },
-  { field: "tools", label: "工具调用", icon: "Wrench" },
+const CAPABILITIES: Array<{ field: CapabilityField; label: (tr: Translate) => string; icon: string }> = [
+  { field: "reasoning", label: (tr) => tr("推理", "Reasoning"), icon: "Brain" },
+  { field: "image", label: (tr) => tr("图片输入", "Image input"), icon: "Image" },
+  { field: "tools", label: (tr) => tr("工具调用", "Tool calls"), icon: "Wrench" },
 ];
 
-const KIND_LABELS: Record<ModelKind, string> = {
-  chat: "对话",
-  embedding: "嵌入模型",
-  reranking: "重排模型",
-  image: "图像模型",
-  audio: "语音模型",
-  video: "视频模型",
-  other: "非对话模型",
-};
+function kindLabel(kind: ModelKind, tr: Translate): string {
+  switch (kind) {
+    case "chat":
+      return tr("对话", "Chat");
+    case "embedding":
+      return tr("嵌入模型", "Embedding model");
+    case "reranking":
+      return tr("重排模型", "Reranking model");
+    case "image":
+      return tr("图像模型", "Image model");
+    case "audio":
+      return tr("语音模型", "Audio model");
+    case "video":
+      return tr("视频模型", "Video model");
+    default:
+      return tr("非对话模型", "Non-chat model");
+  }
+}
 
-const SUGGESTION_REASONS = {
-  guess: "按同系列模型推测",
-  "output-unknown": "网上没有公布输出上限",
-  loose: "只在第三方目录中找到",
-} as const;
+function suggestionReason(reason: "guess" | "output-unknown" | "loose", tr: Translate): string {
+  if (reason === "guess") return tr("按同系列模型推测", "guessed from related models");
+  if (reason === "output-unknown") return tr("网上没有公布输出上限", "the output limit is unpublished");
+  return tr("只在第三方目录中找到", "found only in third-party catalogs");
+}
 
 // Model ids cannot contain NUL (server/adapter-common.ts MODEL_ID), unlike "::"
 // which appears in Bedrock-style ARNs.
@@ -83,11 +95,11 @@ function fieldKey(model: string, field: LimitField): string {
   return `${model}${KEY_SEPARATOR}${field}`;
 }
 
-function sourceText(source: LimitSource, ref?: string): string {
-  if (source === "manual") return "手动";
-  if (source === "gateway") return "网关";
-  if (source === "catalog") return ref ? "网上匹配" : "目录";
-  return "兜底";
+function sourceText(source: LimitSource, tr: Translate, ref?: string): string {
+  if (source === "manual") return tr("手动", "manual");
+  if (source === "gateway") return tr("网关", "gateway");
+  if (source === "catalog") return ref ? tr("网上匹配", "matched online") : tr("目录", "catalog");
+  return tr("兜底", "fallback");
 }
 
 /** Draft manual values as connection settings, so the shared resolver can preview them. */
@@ -95,6 +107,7 @@ function draftSettings(
   connection: Connection,
   texts: Record<string, string>,
   caps: CapsDraft,
+  lang: Lang,
 ): Record<string, ModelSetting> {
   const settings: Record<string, ModelSetting> = {};
   for (const model of connection.models) {
@@ -106,7 +119,7 @@ function draftSettings(
         if (saved[field]) row[field] = saved[field];
         continue;
       }
-      const parsed = parseTokens(texts[key]);
+      const parsed = parseTokens(texts[key], lang);
       if (parsed.value !== undefined) row[field] = { value: parsed.value };
     }
     const draft = caps[model.id];
@@ -124,6 +137,7 @@ function collectChanges(
   texts: Record<string, string>,
   caps: CapsDraft,
   acknowledged: ReadonlySet<string>,
+  lang: Lang,
 ): { changes: SettingChange[]; errors: Record<string, string> } {
   const changes: SettingChange[] = [];
   const errors: Record<string, string> = {};
@@ -136,7 +150,7 @@ function collectChanges(
       if (initial) changes.push({ model, field, value: null });
       continue;
     }
-    const parsed = parseTokens(text);
+    const parsed = parseTokens(text, lang);
     if (parsed.error) {
       errors[key] = parsed.error;
       continue;
@@ -179,6 +193,7 @@ export function ModelSheet({
   reload: () => Promise<boolean>;
 }) {
   const { theme, compact } = useLayout();
+  const { tr, lang } = useTr();
   const t = useTokens(theme, compact);
   const toast = useToast();
   const [selected, setSelected] = useState<string[]>([]);
@@ -247,23 +262,23 @@ export function ModelSheet({
     const fallback: Limits = {};
     const errors: Record<string, string> = {};
     for (const field of ["context", "output"] as const) {
-      const parsed = parseTokens(fallbackText[field]);
+      const parsed = parseTokens(fallbackText[field], lang);
       if (parsed.error) errors[field] = parsed.error;
       else if (parsed.value !== undefined) fallback[field] = parsed.value;
     }
     if (!errors.context && !errors.output && fallback.context && fallback.output && fallback.output >= fallback.context)
-      errors.output = "兜底输出必须小于兜底上下文";
+      errors.output = tr("兜底输出必须小于兜底上下文", "The fallback output must be smaller than the fallback context");
     return {
-      view: { ...connection, fallback, settings: draftSettings(connection, texts, caps) } as Connection,
+      view: { ...connection, fallback, settings: draftSettings(connection, texts, caps, lang) } as Connection,
       fallback,
       fallbackErrors: errors,
     };
-  }, [connection, texts, caps, fallbackText]);
+  }, [connection, texts, caps, fallbackText, lang, tr]);
 
   const collected = useMemo(() => {
     if (!connection) return { changes: [], errors: {} };
-    return collectChanges(connection, texts, caps, acknowledged);
-  }, [connection, texts, caps, acknowledged]);
+    return collectChanges(connection, texts, caps, acknowledged, lang);
+  }, [connection, texts, caps, acknowledged, lang]);
 
   const resolvedFor = (model: Model): ResolvedModel => resolveModel(draft?.view ?? connection!, model);
 
@@ -279,10 +294,13 @@ export function ModelSheet({
       if (!setting?.output) continue;
       const resolved = resolveModel(draft.view, model);
       if (resolved.output.value >= resolved.context.value)
-        errors[fieldKey(model.id, "output")] = `必须小于上下文 ${formatTokens(resolved.context.value)}`;
+        errors[fieldKey(model.id, "output")] = tr(
+          `必须小于上下文 ${formatTokens(resolved.context.value)}`,
+          `Must be smaller than the context ${formatTokens(resolved.context.value)}`,
+        );
     }
     return errors;
-  }, [connection, draft, selected, texts]);
+  }, [connection, draft, selected, texts, tr]);
 
   // Open the rows whose values block saving, so the cause is visible.
   const errorModels = useMemo(
@@ -380,15 +398,18 @@ export function ModelSheet({
         ...(fallbackDirty ? { fallback: draft.fallback } : {}),
         ...(alsoApply.length ? { alsoApply } : {}),
       },
-      { key: "selection", toast: false, reload: false, errorPrefix: "保存模型配置失败" },
+      { key: "selection", toast: false, reload: false, errorPrefix: tr("保存模型配置失败", "Saving the model settings failed") },
     );
     await reload();
     setSaving(false);
     if (ok) {
       toast.show(
         alsoApply.length
-          ? `已更新 ${[agent.label, ...alsoApply.map((id) => snapshot.agents.find((a) => a.id === id)?.label ?? id)].join("、")} 的模型配置`
-          : `已更新 ${agent.label} 的模型配置`,
+          ? tr(
+              `已更新 ${[agent.label, ...alsoApply.map((id) => snapshot.agents.find((a) => a.id === id)?.label ?? id)].join("、")} 的模型配置`,
+              `Updated the models of ${[agent.label, ...alsoApply.map((id) => snapshot.agents.find((a) => a.id === id)?.label ?? id)].join(", ")}`,
+            )
+          : tr(`已更新 ${agent.label} 的模型配置`, `Updated the models of ${agent.label}`),
         { variant: "success" },
       );
       closeSheet();
@@ -400,12 +421,12 @@ export function ModelSheet({
     setSaving(true);
     const ok = await run(
       { type: "selection", agent: agent.id, connection: connection.id, selected: [] },
-      { key: "selection", reload: true, errorPrefix: "清空模型选择失败" },
+      { key: "selection", reload: true, errorPrefix: tr("清空模型选择失败", "Clearing the model selection failed") },
     );
     setSaving(false);
     setConfirmRemove(false);
     if (ok) {
-      toast.show(`已清空 ${agent.label} 的模型选择`, { variant: "success" });
+      toast.show(tr(`已清空 ${agent.label} 的模型选择`, `Cleared the models of ${agent.label}`), { variant: "success" });
       closeSheet();
     }
   };
@@ -457,14 +478,14 @@ export function ModelSheet({
     if (tab === "issues") return issueModelIds.has(model.id);
     return true;
   });
-  const visibleMissing = missing.filter((id) => matches(id, "缺失模型"));
+  const visibleMissing = missing.filter((id) => matches(id, tr("缺失模型", "missing model")));
   const shownModels = visibleModels.slice(0, visibleLimit);
   const existingSelected = selected.filter((id) => Boolean(modelById(connection, id))).length;
 
   const probeNow = (ids: string[]) =>
     void run(
       { type: "probe", connection: connection.id, models: ids },
-      { key: `probe:${connection.id}`, errorPrefix: "测试请求失败" },
+      { key: `probe:${connection.id}`, errorPrefix: tr("测试请求失败", "The test request failed") },
     );
 
   const renderModel = (model: Model) => {
@@ -493,7 +514,7 @@ export function ModelSheet({
         <View style={{ flexDirection: "row", alignItems: "center", gap: 8, padding: 10 }}>
           <Pressable
             accessibilityRole="checkbox"
-            accessibilityLabel={`${isSelected ? "取消选择" : "选择"} ${model.label}`}
+            accessibilityLabel={isSelected ? tr(`取消选择 ${model.label}`, `Deselect ${model.label}`) : tr(`选择 ${model.label}`, `Select ${model.label}`)}
             accessibilityState={{ checked: isSelected, disabled: !selectable }}
             disabled={!selectable}
             onPress={() => toggleModel(model.id)}
@@ -518,19 +539,27 @@ export function ModelSheet({
                 <Text style={[t.bodyStrong, { flexShrink: 1 }]} numberOfLines={1}>
                   {model.label || model.id}
                 </Text>
-                {isDefault ? <Badge tone="accent" label="默认" icon="Star" /> : null}
-                {model.fresh ? <Badge tone="accent" label="新" /> : null}
-                {!chat ? <Badge tone="warning" label={`${KIND_LABELS[model.kind ?? "other"]} · 不能对话`} /> : null}
-                {!model.listed ? <Badge tone="warning" label={isSelected ? "目录缺失" : "未列出"} /> : null}
-                {chat && resolved.pending ? <Badge tone="warning" label="待确认" /> : null}
-                {isSelected && !savedSelected ? <Badge label="待保存" /> : null}
+                {isDefault ? <Badge tone="accent" label={tr("默认", "Default")} icon="Star" /> : null}
+                {model.fresh ? <Badge tone="accent" label={tr("新", "New")} /> : null}
+                {!chat ? (
+                  <Badge tone="warning" label={`${kindLabel(model.kind ?? "other", tr)} · ${tr("不能对话", "can't chat")}`} />
+                ) : null}
+                {!model.listed ? (
+                  <Badge tone="warning" label={isSelected ? tr("目录缺失", "Missing from list") : tr("未列出", "Not listed")} />
+                ) : null}
+                {chat && resolved.pending ? <Badge tone="warning" label={tr("待确认", "To confirm")} /> : null}
+                {isSelected && !savedSelected ? <Badge label={tr("待保存", "Unsaved")} /> : null}
                 {modelConflicts.length > 0 ? (
-                  <Badge tone="warning" label={`${modelConflicts.length} 个冲突`} icon="AlertTriangle" />
+                  <Badge tone="warning" label={tr(`${modelConflicts.length} 个冲突`, `${modelConflicts.length} conflicts`)} icon="AlertTriangle" />
                 ) : null}
                 {probe ? (
                   <Badge
                     tone={probe.ok ? "success" : "danger"}
-                    label={probe.ok ? `可用 ${((probe.ms ?? 0) / 1000).toFixed(1)}s` : "测试失败"}
+                    label={
+                      probe.ok
+                        ? tr(`可用 ${((probe.ms ?? 0) / 1000).toFixed(1)}s`, `Works ${((probe.ms ?? 0) / 1000).toFixed(1)}s`)
+                        : tr("测试失败", "Test failed")
+                    }
                   />
                 ) : null}
               </View>
@@ -541,14 +570,14 @@ export function ModelSheet({
                 <View style={{ flexDirection: "row", gap: 5, flexWrap: "wrap" }}>
                   <Badge
                     tone={resolved.context.source === "fallback" ? "neutral" : "accent"}
-                    label={`上下文 ${formatTokens(resolved.context.value)} · ${sourceText(resolved.context.source, resolved.context.ref)}`}
+                    label={`${tr("上下文", "Context")} ${formatTokens(resolved.context.value)} · ${sourceText(resolved.context.source, tr, resolved.context.ref)}`}
                   />
                   <Badge
                     tone={resolved.output.source === "fallback" ? "neutral" : "accent"}
-                    label={`输出 ${formatTokens(resolved.output.value)} · ${sourceText(resolved.output.source, resolved.output.ref)}${resolved.output.clamped ? " · 已压低" : ""}`}
+                    label={`${tr("输出", "Output")} ${formatTokens(resolved.output.value)} · ${sourceText(resolved.output.source, tr, resolved.output.ref)}${resolved.output.clamped ? ` · ${tr("已压低", "lowered")}` : ""}`}
                   />
                   {CAPABILITIES.filter(({ field }) => resolved.caps[field]).map(({ field, label }) => (
-                    <Badge key={field} label={label} />
+                    <Badge key={field} label={label(tr)} />
                   ))}
                 </View>
               ) : null}
@@ -558,7 +587,7 @@ export function ModelSheet({
             {isSelected && chat && !isDefault ? (
               <IconBtn
                 icon="Star"
-                label={`设 ${model.id} 为默认模型`}
+                label={tr(`设 ${model.id} 为默认模型`, `Make ${model.id} the default model`)}
                 onPress={() => setExplicitDefault(model.id)}
                 testID={`ppm-default-${model.id}`}
               />
@@ -566,7 +595,7 @@ export function ModelSheet({
             {chat ? (
               <IconBtn
                 icon={isExpanded ? "ChevronDown" : "ChevronRight"}
-                label={isExpanded ? "收起" : "展开上限与能力"}
+                label={isExpanded ? tr("收起", "Collapse") : tr("展开上限与能力", "Show limits and capabilities")}
                 onPress={() =>
                   setExpanded((current) => {
                     const next = new Set(current);
@@ -593,29 +622,37 @@ export function ModelSheet({
           >
             {!model.listed ? (
               <Text style={{ color: theme.colors.statusWarning, fontSize: 11.5, lineHeight: 17 }}>
-                网关已不再列出此模型。当前仍使用本地保存的参数，可继续使用或从选择中移除。
+                {tr(
+                  "网关已不再列出此模型。当前仍使用本地保存的参数，可继续使用或从选择中移除。",
+                  "The gateway no longer lists this model. The saved values still apply; keep it or remove it from the selection.",
+                )}
               </Text>
             ) : null}
             {resolved.pending && model.suggested ? (
               <Notice
                 tone="warning"
-                title="待确认的推荐值"
-                action={<Btn label="采用" size="sm" variant="primary" onPress={() => acceptSuggestion(model)} />}
+                title={tr("待确认的推荐值", "Suggested values to confirm")}
+                action={<Btn label={tr("采用", "Adopt")} size="sm" variant="primary" onPress={() => acceptSuggestion(model)} />}
               >
-                {model.suggested.context ? `上下文 ${formatTokensFull(model.suggested.context)}` : ""}
+                {model.suggested.context ? `${tr("上下文", "Context")} ${formatTokensFull(model.suggested.context)}` : ""}
                 {model.suggested.context && model.suggested.output ? " · " : ""}
-                {model.suggested.output ? `输出 ${formatTokensFull(model.suggested.output)}` : ""}
-                {`（${SUGGESTION_REASONS[model.suggested.reason]}${model.suggested.ref ? `，参考 ${model.suggested.ref}` : ""}）。确认前使用兜底值。`}
+                {model.suggested.output ? `${tr("输出", "Output")} ${formatTokensFull(model.suggested.output)}` : ""}
+                {tr(
+                  `（${suggestionReason(model.suggested.reason, tr)}${model.suggested.ref ? `，参考 ${model.suggested.ref}` : ""}）。确认前使用兜底值。`,
+                  ` (${suggestionReason(model.suggested.reason, tr)}${model.suggested.ref ? `, based on ${model.suggested.ref}` : ""}). Fallback values apply until you confirm.`,
+                )}
               </Notice>
             ) : null}
             {model.full && model.context && resolved.context.value !== model.full ? (
               <View style={[t.rowBetween, { gap: 8 }]}>
                 <Text style={[t.tiny, { flex: 1 }]}>
-                  完整窗口 {formatTokens(model.full)}：超过 {formatTokens(model.context.value)} 的部分单价翻倍，默认只用到{" "}
-                  {formatTokens(model.context.value)}。
+                  {tr(
+                    `完整窗口 ${formatTokens(model.full)}：超过 ${formatTokens(model.context.value)} 的部分单价翻倍，默认只用到 ${formatTokens(model.context.value)}。`,
+                    `Full window ${formatTokens(model.full)}: tokens beyond ${formatTokens(model.context.value)} cost twice as much, so ${formatTokens(model.context.value)} is used by default.`,
+                  )}
                 </Text>
                 <Btn
-                  label={`改用 ${formatTokens(model.full)}`}
+                  label={tr(`改用 ${formatTokens(model.full)}`, `Use ${formatTokens(model.full)}`)}
                   size="sm"
                   variant="ghost"
                   onPress={() => setText(fieldKey(model.id, "context"), String(model.full))}
@@ -631,38 +668,43 @@ export function ModelSheet({
               const capacity = model[field];
               const acknowledgedKey = acknowledged.has(key);
               const trimmed = text.trim();
-              const parsed = trimmed ? parseTokens(trimmed) : {};
+              const parsed = trimmed ? parseTokens(trimmed, lang) : {};
               const changedLocally =
                 (trimmed === "" && override !== undefined) ||
                 (parsed.value !== undefined && parsed.value !== override?.value);
               const showConflict = Boolean(conflict) && !acknowledgedKey && !changedLocally;
               const automatic = capacity
-                ? `${formatTokens(capacity.value)} · ${capacity.source === "gateway" ? "网关" : capacity.ref ?? "目录"}`
-                : `兜底 ${formatTokens(fallbackLimits(draft.view)[field])}`;
+                ? `${formatTokens(capacity.value)} · ${capacity.source === "gateway" ? tr("网关", "gateway") : capacity.ref ?? tr("目录", "catalog")}`
+                : `${tr("兜底", "fallback")} ${formatTokens(fallbackLimits(draft.view)[field])}`;
               return (
                 <View key={field} style={{ gap: 6 }}>
                   <View style={t.rowBetween}>
-                    <Text style={t.bodyStrong}>{field === "context" ? "上下文窗口" : "最大输出"}</Text>
-                    <Text style={t.tiny}>自动 {automatic}</Text>
+                    <Text style={t.bodyStrong}>{field === "context" ? tr("上下文窗口", "Context window") : tr("最大输出", "Max output")}</Text>
+                    <Text style={t.tiny}>{tr("自动", "Automatic")} {automatic}</Text>
                   </View>
                   <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
                     <View style={{ flex: 1, minWidth: 0 }}>
                       <TextField
                         value={text}
                         onChangeText={(value) => setText(key, value)}
-                        placeholder={`留空使用自动值（${formatTokens(capacity?.value ?? fallbackLimits(draft.view)[field])}）`}
+                        placeholder={tr(
+                          `留空使用自动值（${formatTokens(capacity?.value ?? fallbackLimits(draft.view)[field])}）`,
+                          `Empty: automatic (${formatTokens(capacity?.value ?? fallbackLimits(draft.view)[field])})`,
+                        )}
                         error={error}
                         editable={!saving}
                         testID={`ppm-limit-${model.id}-${field}`}
                       />
                     </View>
                     {override !== undefined || text ? (
-                      <Btn label="恢复自动" size="sm" variant="ghost" onPress={() => setText(key, "")} disabled={saving} />
+                      <Btn label={tr("恢复自动", "Use automatic")} size="sm" variant="ghost" onPress={() => setText(key, "")} disabled={saving} />
                     ) : null}
                   </View>
                   <Text style={t.tiny}>
-                    生效 {formatTokens(resolved[field].value)} · {sourceText(resolved[field].source, resolved[field].ref)}
-                    {resolved[field].clamped ? " · 自动值不小于上下文，已压低到 1/4" : ""}
+                    {tr("生效", "In effect")} {formatTokens(resolved[field].value)} · {sourceText(resolved[field].source, tr, resolved[field].ref)}
+                    {resolved[field].clamped
+                      ? tr(" · 自动值不小于上下文，已压低到 1/4", " · the automatic value reached the context, lowered to a quarter")
+                      : ""}
                   </Text>
                   {showConflict && conflict ? (
                     <ConflictNotice
@@ -676,18 +718,18 @@ export function ModelSheet({
                     />
                   ) : acknowledgedKey && conflict ? (
                     <Text style={{ color: theme.colors.statusSuccess, fontSize: 11.5, lineHeight: 17 }}>
-                      保存后保留手动值，并确认最新自动值。
+                      {tr("保存后保留手动值，并确认最新自动值。", "Saving keeps the manual value and confirms the new automatic one.")}
                     </Text>
                   ) : conflict && trimmed === "" && override !== undefined ? (
                     <Text style={{ color: theme.colors.statusSuccess, fontSize: 11.5, lineHeight: 17 }}>
-                      保存后改用自动值。
+                      {tr("保存后改用自动值。", "Saving switches to the automatic value.")}
                     </Text>
                   ) : null}
                 </View>
               );
             })}
             <View style={{ gap: 6 }}>
-              <Text style={t.bodyStrong}>能力</Text>
+              <Text style={t.bodyStrong}>{tr("能力", "Capabilities")}</Text>
               {CAPABILITIES.map(({ field, label }) => {
                 const manual = field in (caps[model.id] ?? {})
                   ? caps[model.id]![field]
@@ -697,15 +739,18 @@ export function ModelSheet({
                   setCaps((current) => ({ ...current, [model.id]: { ...(current[model.id] ?? {}), [field]: value } }));
                 return (
                   <View key={field} style={{ flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                    <Text style={[t.small, { width: 64 }]}>{label}</Text>
+                    <Text style={[t.small, { width: 76 }]}>{label(tr)}</Text>
                     <Chip
-                      label={`自动（${automatic === undefined ? (field === "tools" ? "默认是" : "默认否") : automatic ? "是" : "否"}）`}
+                      label={tr(
+                        `自动（${automatic === undefined ? (field === "tools" ? "默认是" : "默认否") : automatic ? "是" : "否"}）`,
+                        `Auto (${automatic === undefined ? (field === "tools" ? "default yes" : "default no") : automatic ? "yes" : "no"})`,
+                      )}
                       selected={manual === undefined}
                       onPress={() => setCap(undefined)}
                       disabled={saving}
                     />
-                    <Chip label="是" selected={manual === true} onPress={() => setCap(true)} disabled={saving} />
-                    <Chip label="否" selected={manual === false} onPress={() => setCap(false)} disabled={saving} />
+                    <Chip label={tr("是", "Yes")} selected={manual === true} onPress={() => setCap(true)} disabled={saving} />
+                    <Chip label={tr("否", "No")} selected={manual === false} onPress={() => setCap(false)} disabled={saving} />
                   </View>
                 );
               })}
@@ -713,12 +758,18 @@ export function ModelSheet({
             {probe && !probe.ok ? (
               <View style={[t.rowBetween, { gap: 8 }]}>
                 <Text style={{ color: theme.colors.statusDanger, fontSize: 11.5, lineHeight: 17, flex: 1 }}>
-                  测试失败：{probe.error ?? "未知错误"}
+                  {tr("测试失败：", "Test failed: ")}
+                  {probe.error ?? tr("未知错误", "unknown error")}
                 </Text>
-                <Btn label="重测" size="sm" variant="ghost" onPress={() => probeNow([model.id])} pending={probing} />
+                <Btn label={tr("重测", "Retest")} size="sm" variant="ghost" onPress={() => probeNow([model.id])} pending={probing} />
               </View>
             ) : null}
-            <Text style={t.tiny}>输入支持 128K、1.5M 等写法；留空表示使用自动值。上限和能力按连接共享。</Text>
+            <Text style={t.tiny}>
+              {tr(
+                "输入支持 128K、1.5M 等写法；留空表示使用自动值。上限和能力按连接共享。",
+                "Values like 128K or 1.5M work; empty means automatic. Limits and capabilities are shared per connection.",
+              )}
+            </Text>
           </View>
         ) : null}
       </View>
@@ -732,30 +783,37 @@ export function ModelSheet({
         onOpenChange={(next) => {
           if (!next) requestClose();
         }}
-        title={`${connection.name} · 模型`}
+        title={`${connection.name} · ${tr("模型", "Models")}`}
         icon={<Icon name="ListChecks" size={18} color={theme.colors.accent} />}
         testID="ppm-model-sheet"
         footer={
           <>
             <View style={{ flex: 1, minWidth: 140 }}>
               <Text style={t.small}>
-                已选 {existingSelected} / {allModels.length} 个模型
-                {conflictCount ? ` · ${conflictCount} 个冲突` : ""}
-                {missing.length + unlisted.length ? ` · ${missing.length + unlisted.length} 个缺失` : ""}
+                {tr(`已选 ${existingSelected} / ${allModels.length} 个模型`, `${existingSelected} / ${allModels.length} models selected`)}
+                {conflictCount ? tr(` · ${conflictCount} 个冲突`, ` · ${conflictCount} conflicts`) : ""}
+                {missing.length + unlisted.length
+                  ? tr(` · ${missing.length + unlisted.length} 个缺失`, ` · ${missing.length + unlisted.length} missing`)
+                  : ""}
               </Text>
               {hasErrors ? (
                 <Text style={{ color: theme.colors.statusDanger, fontSize: 11 }}>
                   {Object.keys(draft.fallbackErrors).length
-                    ? "请修正兜底值"
-                    : `请修正 ${new Set(errorModels).size} 个模型的上限值（见“待处理”）`}
+                    ? tr("请修正兜底值", "Fix the fallback values")
+                    : tr(
+                        `请修正 ${new Set(errorModels).size} 个模型的上限值（见“待处理”）`,
+                        `Fix the limits of ${new Set(errorModels).size} models (see “To review”)`,
+                      )}
                 </Text>
               ) : selected.length === 0 ? (
-                <Text style={{ color: theme.colors.statusWarning, fontSize: 11 }}>至少选择一个模型，或清空选择</Text>
+                <Text style={{ color: theme.colors.statusWarning, fontSize: 11 }}>
+                  {tr("至少选择一个模型，或清空选择", "Select at least one model, or clear the selection")}
+                </Text>
               ) : null}
             </View>
             {canRemove ? (
               <Btn
-                label="清空选择"
+                label={tr("清空选择", "Clear selection")}
                 variant="danger"
                 size="sm"
                 icon="Unlink"
@@ -764,9 +822,9 @@ export function ModelSheet({
                 testID="ppm-model-remove"
               />
             ) : null}
-            <Btn label="取消" onPress={requestClose} disabled={saving} />
+            <Btn label={tr("取消", "Cancel")} onPress={requestClose} disabled={saving} />
             <Btn
-              label={saving ? "保存中…" : "保存"}
+              label={saving ? tr("保存中…", "Saving…") : tr("保存", "Save")}
               variant="primary"
               icon="Check"
               onPress={() => void handleSave()}
@@ -790,15 +848,21 @@ export function ModelSheet({
           <View style={{ flexDirection: "row", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
             <Icon name="Server" size={15} color={theme.colors.foregroundMuted} />
             <Badge tone="accent" label={protocolLabel(connection.protocol)} />
-            {connection.catalogProvider ? <Badge label={`目录 ${connection.catalogProvider}`} /> : null}
+            {connection.catalogProvider ? (
+              <Badge label={tr(`目录 ${connection.catalogProvider}`, `Catalog ${connection.catalogProvider}`)} />
+            ) : null}
             <Badge
               tone={connection.hasKey ? "success" : "warning"}
-              label={connection.hasKey ? "已保存密钥" : "未保存密钥"}
+              label={connection.hasKey ? tr("已保存密钥", "Key saved") : tr("未保存密钥", "No key")}
             />
-            {connection.error ? <Badge tone="danger" label="刷新失败" /> : null}
+            {connection.error ? <Badge tone="danger" label={tr("刷新失败", "Refresh failed")} /> : null}
             <View style={{ flex: 1 }} />
             <Btn
-              label={probing ? "测试中…" : `发送测试请求 · ${probeTargets.length} 个`}
+              label={
+                probing
+                  ? tr("测试中…", "Testing…")
+                  : tr(`发送测试请求 · ${probeTargets.length} 个`, `Send test requests · ${probeTargets.length}`)
+              }
               size="sm"
               variant="ghost"
               icon="Send"
@@ -808,7 +872,7 @@ export function ModelSheet({
               testID="ppm-probe"
             />
             <Btn
-              label="编辑连接"
+              label={tr("编辑连接", "Edit connection")}
               size="sm"
               variant="ghost"
               icon="Pencil"
@@ -823,27 +887,32 @@ export function ModelSheet({
             {connection.url}
           </Text>
           <Text style={t.tiny}>
-            发送测试请求会给已选的对话模型各发一条极短请求（每个约几十 token），结果标在每一行。
+            {tr(
+              "发送测试请求会给已选的对话模型各发一条极短请求（每个约几十 token），结果标在每一行。",
+              "Test requests send one tiny request to each selected chat model (a few dozen tokens each); results appear on each row.",
+            )}
           </Text>
           {connection.error ? (
-            <Notice tone="danger" title="最近一次刷新失败">
+            <Notice tone="danger" title={tr("最近一次刷新失败", "The last refresh failed")}>
               {connection.error}
             </Notice>
           ) : null}
         </View>
 
-        <Notice tone="accent" title="上限和能力按连接共享">
-          在这里修改的上下文、最大输出和能力会作用于这个连接上的所有 Agent
-          {sharedAgents.length ? `（当前还有 ${sharedAgents.join("、")}）` : ""}。模型选择和默认模型属于 {agent.label}。
+        <Notice tone="accent" title={tr("上限和能力按连接共享", "Limits and capabilities are shared per connection")}>
+          {tr(
+            `在这里修改的上下文、最大输出和能力会作用于这个连接上的所有 Agent${sharedAgents.length ? `（当前还有 ${sharedAgents.join("、")}）` : ""}。模型选择和默认模型属于 ${agent.label}。`,
+            `Context, max output and capability changes here apply to every agent on this connection${sharedAgents.length ? ` (also ${sharedAgents.join(", ")})` : ""}. The model selection and default model belong to ${agent.label}.`,
+          )}
         </Notice>
 
         {pending.length ? (
           <Notice
             tone="warning"
-            title={`${pending.length} 个模型有待确认的推荐值`}
+            title={tr(`${pending.length} 个模型有待确认的推荐值`, `${pending.length} models have suggested values to confirm`)}
             action={
               <Btn
-                label="全部采用推荐值"
+                label={tr("全部采用推荐值", "Adopt all suggestions")}
                 size="sm"
                 variant="primary"
                 onPress={() => pending.forEach(acceptSuggestion)}
@@ -851,35 +920,43 @@ export function ModelSheet({
               />
             }
           >
-            推测值或网上未公布的输出上限需要确认；确认前使用兜底值。采用后仍可逐个修改，保存后生效。
+            {tr(
+              "推测值或网上未公布的输出上限需要确认；确认前使用兜底值。采用后仍可逐个修改，保存后生效。",
+              "Guesses and unpublished output limits need confirmation; fallback values apply until then. You can still edit each value; changes apply when you save.",
+            )}
           </Notice>
         ) : null}
 
         {nonChat.length ? (
           <Notice
             tone="warning"
-            title={`已选 ${nonChat.length} 个非对话模型`}
+            title={tr(`已选 ${nonChat.length} 个非对话模型`, `${nonChat.length} selected models cannot chat`)}
             action={
               <Btn
-                label="全部移除"
+                label={tr("全部移除", "Remove all")}
                 size="sm"
                 variant="danger"
                 onPress={() => setSelected((current) => current.filter((id) => !nonChat.some((m) => m.id === id)))}
               />
             }
           >
-            {nonChat.map((model) => model.id).join("、")} 不能用于对话。
+            {tr(
+              `${nonChat.map((model) => model.id).join("、")} 不能用于对话。`,
+              `${nonChat.map((model) => model.id).join(", ")} cannot be used for chat.`,
+            )}
           </Notice>
         ) : null}
 
         <View style={{ gap: 6 }}>
-          <Text style={t.bodyStrong}>兜底值</Text>
-          <Text style={t.tiny}>网上查不到的模型使用这组值；留空为 128K / 16K。</Text>
+          <Text style={t.bodyStrong}>{tr("兜底值", "Fallback values")}</Text>
+          <Text style={t.tiny}>
+            {tr("网上查不到的模型使用这组值；留空为 128K / 16K。", "Used for models no source knows; empty means 128K / 16K.")}
+          </Text>
           <View style={{ flexDirection: compact ? "column" : "row", gap: 8 }}>
             {(["context", "output"] as const).map((field) => (
               <View key={field} style={{ flex: 1 }}>
                 <TextField
-                  label={field === "context" ? "上下文窗口" : "最大输出"}
+                  label={field === "context" ? tr("上下文窗口", "Context window") : tr("最大输出", "Max output")}
                   value={fallbackText[field]}
                   onChangeText={(value) => setFallbackText((current) => ({ ...current, [field]: value }))}
                   placeholder={field === "context" ? "128K" : "16K"}
@@ -893,10 +970,10 @@ export function ModelSheet({
         </View>
 
         <View style={{ flexDirection: compact ? "column" : "row", gap: 8, alignItems: compact ? "stretch" : "center" }}>
-          <SearchField value={query} onChangeText={setQuery} placeholder="搜索模型名称或 ID" testID="ppm-model-search" />
+          <SearchField value={query} onChangeText={setQuery} placeholder={tr("搜索模型名称或 ID", "Search model names or ids")} testID="ppm-model-search" />
           <View style={{ flexDirection: "row", gap: 6 }}>
             <Btn
-              label="全选对话模型"
+              label={tr("全选对话模型", "Select all chat models")}
               size="sm"
               onPress={() =>
                 setSelected((current) => {
@@ -907,7 +984,7 @@ export function ModelSheet({
               }
               disabled={saving}
             />
-            <Btn label="清空" size="sm" variant="ghost" onPress={() => setSelected([])} disabled={saving || selected.length === 0} />
+            <Btn label={tr("清空", "Clear")} size="sm" variant="ghost" onPress={() => setSelected([])} disabled={saving || selected.length === 0} />
           </View>
         </View>
 
@@ -915,9 +992,9 @@ export function ModelSheet({
           value={tab}
           onChange={setTab}
           options={[
-            { value: "all", label: "全部", count: allModels.length + missing.length },
-            { value: "selected", label: "已选", count: selected.length },
-            { value: "issues", label: "待处理", count: issueModelIds.size },
+            { value: "all", label: tr("全部", "All"), count: allModels.length + missing.length },
+            { value: "selected", label: tr("已选", "Selected"), count: selected.length },
+            { value: "issues", label: tr("待处理", "To review"), count: issueModelIds.size },
           ]}
           testID="ppm-model-tabs"
         />
@@ -941,21 +1018,29 @@ export function ModelSheet({
               <Icon name="TriangleAlert" size={16} color={theme.colors.statusWarning} />
               <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
                 <Text style={t.bodyStrong} numberOfLines={1}>
-                  缺失的模型
+                  {tr("缺失的模型", "Missing model")}
                 </Text>
                 <Text style={t.mono} numberOfLines={1}>
                   {id}
                 </Text>
-                <Text style={t.tiny}>连接刷新后不再提供此模型。移除后不会再出现在该 Agent 的配置中。</Text>
+                <Text style={t.tiny}>
+                  {tr(
+                    "连接刷新后不再提供此模型。移除后不会再出现在该 Agent 的配置中。",
+                    "The connection no longer offers this model. Removing it drops it from this agent's configuration.",
+                  )}
+                </Text>
               </View>
-              <Btn label="移除" size="sm" variant="danger" icon="X" onPress={() => toggleModel(id)} disabled={saving} />
+              <Btn label={tr("移除", "Remove")} size="sm" variant="danger" icon="X" onPress={() => toggleModel(id)} disabled={saving} />
             </View>
           ))}
           {shownModels.map(renderModel)}
           {visibleModels.length > shownModels.length ? (
             <View style={{ alignItems: "center", paddingTop: 2 }}>
               <Btn
-                label={`显示更多（还剩 ${visibleModels.length - shownModels.length}）`}
+                label={tr(
+                  `显示更多（还剩 ${visibleModels.length - shownModels.length}）`,
+                  `Show more (${visibleModels.length - shownModels.length} left)`,
+                )}
                 size="sm"
                 variant="ghost"
                 onPress={() => setVisibleLimit((current) => current + 80)}
@@ -964,17 +1049,17 @@ export function ModelSheet({
           ) : null}
           {visibleModels.length === 0 && visibleMissing.length === 0 ? (
             <View style={{ paddingVertical: 22, alignItems: "center", gap: 4 }}>
-              <Text style={t.h3}>{query ? "没有匹配的模型" : "没有可用的模型"}</Text>
+              <Text style={t.h3}>{query ? tr("没有匹配的模型", "No matching models") : tr("没有可用的模型", "No models")}</Text>
               <Text style={[t.small, { textAlign: "center" }]}>
                 {query
-                  ? "换一个关键词，或清空搜索。"
+                  ? tr("换一个关键词，或清空搜索。", "Try another keyword, or clear the search.")
                   : connection.models.length === 0
-                    ? "刷新连接以获取模型目录，然后再选择模型。"
+                    ? tr("刷新连接以获取模型目录，然后再选择模型。", "Refresh the connection to load its models, then choose.")
                     : tab === "selected"
-                      ? "还没有选择模型。切换到“全部”开始选择。"
+                      ? tr("还没有选择模型。切换到“全部”开始选择。", "No models selected yet. Switch to “All” to choose.")
                       : tab === "issues"
-                        ? "没有需要处理的模型。"
-                        : "此连接没有返回模型。"}
+                        ? tr("没有需要处理的模型。", "Nothing to review.")
+                        : tr("此连接没有返回模型。", "This connection returned no models.")}
               </Text>
             </View>
           ) : null}
@@ -982,9 +1067,12 @@ export function ModelSheet({
 
         {syncCandidates.length ? (
           <View style={{ gap: 6 }}>
-            <Text style={t.bodyStrong}>同时应用到</Text>
+            <Text style={t.bodyStrong}>{tr("同时应用到", "Also apply to")}</Text>
             <Text style={t.tiny}>
-              保存时把同一组模型和默认模型也应用到勾选的 Agent；之后它们仍可单独修改。
+              {tr(
+                "保存时把同一组模型和默认模型也应用到勾选的 Agent；之后它们仍可单独修改。",
+                "Saving also gives the checked agents this model selection and default model; each can still be changed later.",
+              )}
             </Text>
             <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 7 }}>
               {syncCandidates.map((item) => {
@@ -995,7 +1083,7 @@ export function ModelSheet({
                 return (
                   <Chip
                     key={item.id}
-                    label={bound ? `${item.label}（已接入）` : item.label}
+                    label={bound ? tr(`${item.label}（已接入）`, `${item.label} (connected)`) : item.label}
                     icon={on ? "Check" : undefined}
                     selected={on}
                     onPress={() =>
@@ -1013,17 +1101,23 @@ export function ModelSheet({
         ) : null}
 
         {allModels.length === 0 ? (
-          <Notice tone="warning" title="模型目录为空">
-            请返回连接卡片刷新该连接。如果刷新仍然没有模型，请检查网关地址与密钥。
+          <Notice tone="warning" title={tr("模型目录为空", "The model list is empty")}>
+            {tr(
+              "请返回连接卡片刷新该连接。如果刷新仍然没有模型，请检查网关地址与密钥。",
+              "Refresh the connection from its card. If it still has no models, check the gateway URL and key.",
+            )}
           </Notice>
         ) : null}
       </Sheet>
 
       <ConfirmDialog
         open={confirmDiscard}
-        title="放弃未保存的更改？"
-        description="模型选择、上限或能力还没有保存，关闭后将丢失这些修改。"
-        confirmLabel="放弃更改"
+        title={tr("放弃未保存的更改？", "Discard unsaved changes?")}
+        description={tr(
+          "模型选择、上限或能力还没有保存，关闭后将丢失这些修改。",
+          "The model selection, limits or capabilities are not saved; closing discards them.",
+        )}
+        confirmLabel={tr("放弃更改", "Discard")}
         onConfirm={() => {
           setConfirmDiscard(false);
           closeSheet();
@@ -1032,9 +1126,12 @@ export function ModelSheet({
       />
       <ConfirmDialog
         open={confirmEdit}
-        title="放弃未保存的修改并编辑连接？"
-        description="当前模型选择、上限或能力还没有保存。编辑连接会先关闭此面板，未保存的修改将丢失。"
-        confirmLabel="放弃并编辑"
+        title={tr("放弃未保存的修改并编辑连接？", "Discard changes and edit the connection?")}
+        description={tr(
+          "当前模型选择、上限或能力还没有保存。编辑连接会先关闭此面板，未保存的修改将丢失。",
+          "The model selection, limits or capabilities are not saved. Editing the connection closes this sheet and discards them.",
+        )}
+        confirmLabel={tr("放弃并编辑", "Discard and edit")}
         onConfirm={() => {
           setConfirmEdit(false);
           onEditConnection(connection);
@@ -1043,9 +1140,12 @@ export function ModelSheet({
       />
       <ConfirmDialog
         open={confirmRemove}
-        title="清空全部模型选择？"
-        description={`将清空 ${agent.label} 对 ${connection.name} 的全部模型选择。连接、密钥、模型目录和上限设置都会保留，之后仍可重新选择模型。`}
-        confirmLabel="清空选择"
+        title={tr("清空全部模型选择？", "Clear the whole model selection?")}
+        description={tr(
+          `将清空 ${agent.label} 对 ${connection.name} 的全部模型选择。连接、密钥、模型目录和上限设置都会保留，之后仍可重新选择模型。`,
+          `This clears every model ${agent.label} uses from ${connection.name}. The connection, key, model list and limits stay; you can choose models again later.`,
+        )}
+        confirmLabel={tr("清空选择", "Clear selection")}
         pending={saving}
         onConfirm={() => void handleRemove()}
         onCancel={() => setConfirmRemove(false)}
@@ -1066,6 +1166,7 @@ function ConflictNotice({
   onAccept: () => void;
 }) {
   const { theme, compact } = useLayout();
+  const { tr } = useTr();
   const t = useTokens(theme, compact);
   return (
     <View
@@ -1082,17 +1183,22 @@ function ConflictNotice({
         <Icon name="AlertTriangle" size={14} color={theme.colors.statusWarning} />
         <View style={{ flex: 1, gap: 2 }}>
           <Text style={{ color: theme.colors.statusWarning, fontSize: 12, fontWeight: "600" }}>
-            {field === "context" ? "上下文" : "输出"}自动值已更新
+            {field === "context"
+              ? tr("上下文自动值已更新", "The automatic context changed")
+              : tr("输出自动值已更新", "The automatic output changed")}
           </Text>
           <Text style={t.tiny}>
-            手动值 {formatTokensFull(conflict.manual.value)} · 最新自动值 {formatTokensFull(conflict.automatic)}
-            {conflict.acknowledged !== undefined ? ` · 上次确认 ${formatTokensFull(conflict.acknowledged)}` : ""}
+            {tr("手动值", "Manual")} {formatTokensFull(conflict.manual.value)} · {tr("最新自动值", "new automatic")}{" "}
+            {formatTokensFull(conflict.automatic)}
+            {conflict.acknowledged !== undefined
+              ? ` · ${tr("上次确认", "last confirmed")} ${formatTokensFull(conflict.acknowledged)}`
+              : ""}
           </Text>
         </View>
       </View>
       <View style={{ flexDirection: "row", gap: 6, flexWrap: "wrap" }}>
-        <Btn label="保留手动" size="sm" variant="secondary" onPress={onKeep} />
-        <Btn label="采用自动" size="sm" variant="primary" onPress={onAccept} />
+        <Btn label={tr("保留手动", "Keep manual")} size="sm" variant="secondary" onPress={onKeep} />
+        <Btn label={tr("采用自动", "Use automatic")} size="sm" variant="primary" onPress={onAccept} />
       </View>
     </View>
   );

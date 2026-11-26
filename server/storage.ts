@@ -4,13 +4,14 @@ import { randomUUID } from "node:crypto";
 import type { PaseoApi } from "./types";
 import type { ProviderPatch } from "./types";
 import { initialState, migrateState, type State } from "./state";
+import { L } from "./i18n";
 
 async function optionalJson<T>(path: string): Promise<T | null> {
   try {
     return JSON.parse(await readFile(path, "utf8")) as T;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
-    throw new Error("无法读取管理器数据，请检查数据文件及权限。");
+    throw new Error(L("无法读取管理器数据，请检查数据文件及权限。", "Cannot read the manager data. Check the data file and its permissions."));
   }
 }
 async function atomicJson(path: string, value: unknown) {
@@ -86,7 +87,7 @@ export class Storage {
     } catch {
       if (await this.settle(pending, paseo)) return;
       throw new Error(
-        "Paseo 未应用 provider 配置，请检查 CLI 版本和模型设置。",
+        L("Paseo 未应用 provider 配置，请检查 CLI 版本和模型设置。", "Paseo did not apply the provider configuration. Check the CLI version and model settings."),
       );
     }
     await atomicJson(this.statePath, next);

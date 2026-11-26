@@ -32,6 +32,7 @@ import {
   Notice,
   useLayout,
   useTokens,
+  useTr,
   withAlpha,
 } from "./ui";
 
@@ -57,6 +58,7 @@ export function BoundConnectionCard({
   onDelete: () => void;
 }) {
   const { theme, compact } = useLayout();
+  const { tr, lang } = useTr();
   const t = useTokens(theme, compact);
   const now = Date.now();
   const missing = missingModelIds(binding, connection);
@@ -98,30 +100,30 @@ export function BoundConnectionCard({
             </Text>
             <Badge tone="accent" label={protocolLabel(connection.protocol)} />
             {connection.error ? (
-              <Badge tone="danger" label="刷新失败" icon="AlertTriangle" />
+              <Badge tone="danger" label={tr("刷新失败", "Refresh failed")} icon="AlertTriangle" />
             ) : stale ? (
-              <Badge tone="warning" label="数据过期" />
+              <Badge tone="warning" label={tr("数据过期", "Stale")} />
             ) : (
-              <Badge tone="success" label="已同步" />
+              <Badge tone="success" label={tr("已同步", "Synced")} />
             )}
             {connection.hasKey ? (
-              <Badge tone="success" label="有密钥" />
+              <Badge tone="success" label={tr("有密钥", "Key saved")} />
             ) : (
-              <Badge tone="warning" label="无密钥" />
+              <Badge tone="warning" label={tr("无密钥", "No key")} />
             )}
           </View>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
             <Text style={[t.mono, { flexShrink: 1 }]} numberOfLines={1}>
               {connection.url}
             </Text>
-            <CopyButton text={connection.url} label="复制地址" />
+            <CopyButton text={connection.url} label={tr("复制地址", "Copy URL")} />
           </View>
         </View>
         <View style={{ flexDirection: "row", gap: 1 }}>
-          <IconBtn icon="Pencil" label={`编辑 ${connection.name}`} onPress={onEdit} />
+          <IconBtn icon="Pencil" label={tr(`编辑 ${connection.name}`, `Edit ${connection.name}`)} onPress={onEdit} />
           <IconBtn
             icon="Trash2"
-            label={`删除 ${connection.name}`}
+            label={tr(`删除 ${connection.name}`, `Delete ${connection.name}`)}
             tone="danger"
             onPress={onDelete}
           />
@@ -130,23 +132,23 @@ export function BoundConnectionCard({
 
       <View style={{ flexDirection: "row", gap: 6, flexWrap: "wrap" }}>
         <Badge
-          label={`已选 ${selected.length} / ${connection.models.length}`}
+          label={tr(`已选 ${selected.length} / ${connection.models.length}`, `${selected.length} / ${connection.models.length} selected`)}
           tone={binding.selected.length ? "accent" : "warning"}
           icon="ListChecks"
         />
         {connection.catalogProvider ? (
-          <Badge label={`目录 ${connection.catalogProvider}`} icon="Database" />
+          <Badge label={tr(`目录 ${connection.catalogProvider}`, `Catalog ${connection.catalogProvider}`)} icon="Database" />
         ) : null}
-        <Badge label={refreshLabel(connection.lastRefresh, now)} icon="Clock" />
+        <Badge label={refreshLabel(connection.lastRefresh, lang, now)} icon="Clock" />
       </View>
 
       {connection.error ? (
         <Notice
           tone="danger"
-          title="最近一次刷新失败"
+          title={tr("最近一次刷新失败", "The last refresh failed")}
           action={
             <Btn
-              label="重试"
+              label={tr("重试", "Retry")}
               size="sm"
               variant="ghost"
               onPress={onRefresh}
@@ -159,10 +161,10 @@ export function BoundConnectionCard({
       ) : stale ? (
         <Notice
           tone="warning"
-          title="模型目录可能已过期"
+          title={tr("模型目录可能已过期", "The model list may be stale")}
           action={
             <Btn
-              label="刷新"
+              label={tr("刷新", "Refresh")}
               size="sm"
               variant="ghost"
               onPress={onRefresh}
@@ -171,25 +173,35 @@ export function BoundConnectionCard({
           }
         >
           {connection.lastRefresh
-            ? `上次刷新：${formatRelativeTime(connection.lastRefresh, now)}。`
-            : "尚未成功刷新过。"}
-          过期连接会在打开页面时自动刷新。
+            ? tr(
+                `上次刷新：${formatRelativeTime(connection.lastRefresh, lang, now)}。`,
+                `Last refreshed ${formatRelativeTime(connection.lastRefresh, lang, now)}. `,
+              )
+            : tr("尚未成功刷新过。", "Never refreshed successfully. ")}
+          {tr("过期连接会在打开页面时自动刷新。", "Stale connections refresh when the page opens.")}
         </Notice>
       ) : null}
 
       {missingCount ? (
         <Notice
           tone="warning"
-          title={`${missingCount} 个已选模型缺失`}
+          title={tr(`${missingCount} 个已选模型缺失`, `${missingCount} selected models are missing`)}
           action={
-            <Btn label="处理" size="sm" variant="ghost" onPress={onManage} />
+            <Btn label={tr("处理", "Fix")} size="sm" variant="ghost" onPress={onManage} />
           }
         >
           {missing.length
-            ? `${missing.length} 个模型已不在保存的目录中，保存选择前需要移除。`
+            ? tr(
+                `${missing.length} 个模型已不在保存的目录中，保存选择前需要移除。`,
+                `${missing.length} models are no longer in the saved list and must be removed before saving.`,
+              )
             : ""}
           {unlisted.length
-            ? `${missing.length ? " " : ""}${unlisted.length} 个模型仍在本地目录中，但网关已不再列出它们；可继续使用已保存的参数或移除。`
+            ? (missing.length ? " " : "") +
+              tr(
+                `${unlisted.length} 个模型仍在本地目录中，但网关已不再列出它们；可继续使用已保存的参数或移除。`,
+                `${unlisted.length} models are still saved locally but the gateway no longer lists them; keep using the saved values or remove them.`,
+              )
             : ""}
         </Notice>
       ) : null}
@@ -197,47 +209,57 @@ export function BoundConnectionCard({
       {conflicts ? (
         <Notice
           tone="warning"
-          title={`${conflicts} 个手动限额与自动值冲突`}
-          action={<Btn label="查看" size="sm" variant="ghost" onPress={onManage} />}
+          title={tr(`${conflicts} 个手动限额与自动值冲突`, `${conflicts} manual limits differ from new automatic values`)}
+          action={<Btn label={tr("查看", "Review")} size="sm" variant="ghost" onPress={onManage} />}
         >
-          网关或目录给出了新的容量值，请选择保留手动值或采用自动值。
+          {tr(
+            "网关或目录给出了新的容量值，请选择保留手动值或采用自动值。",
+            "The gateway or catalog reports new limits; keep your manual values or use the automatic ones.",
+          )}
         </Notice>
       ) : null}
 
       {pending.length ? (
         <Notice
           tone="warning"
-          title={`${pending.length} 个已选模型有待确认的推荐值`}
-          action={<Btn label="查看" size="sm" variant="ghost" onPress={onManage} />}
+          title={tr(`${pending.length} 个已选模型有待确认的推荐值`, `${pending.length} selected models have suggested values to confirm`)}
+          action={<Btn label={tr("查看", "Review")} size="sm" variant="ghost" onPress={onManage} />}
         >
-          这些值是按同系列推测的，或网上没有公布输出上限。确认前先使用兜底值。
+          {tr(
+            "这些值是按同系列推测的，或网上没有公布输出上限。确认前先使用兜底值。",
+            "These are guesses from related models, or the output limit is unpublished. Fallback values apply until you confirm.",
+          )}
         </Notice>
       ) : null}
 
       {nonChat.length ? (
         <Notice
           tone="warning"
-          title={`已选 ${nonChat.length} 个非对话模型`}
-          action={<Btn label="处理" size="sm" variant="ghost" onPress={onManage} />}
+          title={tr(`已选 ${nonChat.length} 个非对话模型`, `${nonChat.length} selected models cannot chat`)}
+          action={<Btn label={tr("处理", "Fix")} size="sm" variant="ghost" onPress={onManage} />}
         >
-          {nonChat.slice(0, 3).map((model) => model.id).join("、")}
-          {nonChat.length > 3 ? " 等" : ""}不能用于对话，建议从选择中移除。
+          {tr(
+            `${nonChat.slice(0, 3).map((model) => model.id).join("、")}${nonChat.length > 3 ? " 等" : ""}不能用于对话，建议从选择中移除。`,
+            `${nonChat.slice(0, 3).map((model) => model.id).join(", ")}${nonChat.length > 3 ? " and more" : ""} cannot be used for chat; remove them from the selection.`,
+          )}
         </Notice>
       ) : null}
 
       {fresh.length ? (
         <Notice
           tone="accent"
-          title={`网关新增 ${fresh.length} 个模型`}
-          action={<Btn label="查看" size="sm" variant="ghost" onPress={onManage} />}
+          title={tr(`网关新增 ${fresh.length} 个模型`, `The gateway added ${fresh.length} models`)}
+          action={<Btn label={tr("查看", "Review")} size="sm" variant="ghost" onPress={onManage} />}
         >
-          {fresh.slice(0, 3).map((model) => model.id).join("、")}
-          {fresh.length > 3 ? " 等" : ""}。新模型不会自动启用。
+          {tr(
+            `${fresh.slice(0, 3).map((model) => model.id).join("、")}${fresh.length > 3 ? " 等" : ""}。新模型不会自动启用。`,
+            `${fresh.slice(0, 3).map((model) => model.id).join(", ")}${fresh.length > 3 ? " and more" : ""}. New models are not enabled automatically.`,
+          )}
         </Notice>
       ) : null}
 
       <View style={{ gap: 7 }}>
-        <Text style={t.small}>已选模型</Text>
+        <Text style={t.small}>{tr("已选模型", "Selected models")}</Text>
         {selected.length ? (
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
             {selected.slice(0, compact ? 4 : 8).map((model) => (
@@ -266,19 +288,21 @@ export function BoundConnectionCard({
             }}
           >
             <View style={{ flex: 1 }}>
-              <Text style={t.bodyStrong}>尚未选择模型</Text>
-              <Text style={t.tiny}>为该 Agent 选择此连接允许使用的模型与限额。</Text>
+              <Text style={t.bodyStrong}>{tr("尚未选择模型", "No models selected")}</Text>
+              <Text style={t.tiny}>{tr("为该 Agent 选择此连接允许使用的模型与限额。", "Choose which models of this connection the agent may use, and their limits.")}</Text>
             </View>
-            <Btn label="选择模型" size="sm" variant="primary" onPress={onManage} />
+            <Btn label={tr("选择模型", "Choose models")} size="sm" variant="primary" onPress={onManage} />
           </View>
         )}
         {missingCount ? (
           <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
             <Icon name="TriangleAlert" size={13} color={theme.colors.statusWarning} />
             <Text style={[t.tiny, { color: theme.colors.statusWarning }]}>
-              {missingCount} 个模型缺失
-              {missing.length ? `：${missing.slice(0, 3).join(", ")}${missing.length > 3 ? "…" : ""}` : ""}
-              {unlisted.length ? `${missing.length ? "；" : "："}${unlisted.slice(0, 3).map((model) => model.label || model.id).join(", ")}${unlisted.length > 3 ? "…" : ""}` : ""}
+              {tr(`${missingCount} 个模型缺失`, `${missingCount} models missing`)}
+              {missing.length ? `${tr("：", ": ")}${missing.slice(0, 3).join(", ")}${missing.length > 3 ? "…" : ""}` : ""}
+              {unlisted.length
+                ? `${missing.length ? tr("；", "; ") : tr("：", ": ")}${unlisted.slice(0, 3).map((model) => model.label || model.id).join(", ")}${unlisted.length > 3 ? "…" : ""}`
+                : ""}
             </Text>
           </View>
         ) : null}
@@ -296,13 +320,13 @@ export function BoundConnectionCard({
         }}
       >
         <Btn
-          label={binding.selected.length ? "模型与限额" : "选择模型"}
+          label={binding.selected.length ? tr("模型与限额", "Models & limits") : tr("选择模型", "Choose models")}
           icon="ListChecks"
           onPress={onManage}
           testID={`ppm-manage-models-${connection.id}`}
         />
         <Btn
-          label={refreshing ? "刷新中…" : "刷新目录"}
+          label={refreshing ? tr("刷新中…", "Refreshing…") : tr("刷新目录", "Refresh models")}
           icon="RefreshCw"
           onPress={onRefresh}
           pending={refreshing}
@@ -310,7 +334,7 @@ export function BoundConnectionCard({
           testID={`ppm-refresh-${connection.id}`}
         />
         <Btn
-          label={testing ? "测试中…" : "测试全部模型"}
+          label={testing ? tr("测试中…", "Testing…") : tr("测试全部模型", "Test all models")}
           icon="Activity"
           onPress={onTest}
           pending={testing}
@@ -379,6 +403,7 @@ export function AvailableConnectionRow({
   onAdd: () => void;
 }) {
   const { theme, compact } = useLayout();
+  const { tr, lang } = useTr();
   const t = useTokens(theme, compact);
   return (
     <View
@@ -412,17 +437,17 @@ export function AvailableConnectionRow({
             {connection.name}
           </Text>
           <Badge tone="accent" label={protocolLabel(connection.protocol)} />
-          {connection.error ? <Badge tone="danger" label="刷新失败" /> : null}
-          {!connection.hasKey ? <Badge tone="warning" label="无密钥" /> : null}
+          {connection.error ? <Badge tone="danger" label={tr("刷新失败", "Refresh failed")} /> : null}
+          {!connection.hasKey ? <Badge tone="warning" label={tr("无密钥", "No key")} /> : null}
         </View>
         <Text style={t.tiny} numberOfLines={1}>
-          {connection.models.length} 个模型
-          {connection.catalogProvider ? ` · 目录 ${connection.catalogProvider}` : ""}
-          {` · ${formatRelativeTime(connection.lastRefresh)}`}
+          {tr(`${connection.models.length} 个模型`, `${connection.models.length} models`)}
+          {connection.catalogProvider ? tr(` · 目录 ${connection.catalogProvider}`, ` · catalog ${connection.catalogProvider}`) : ""}
+          {` · ${formatRelativeTime(connection.lastRefresh, lang)}`}
         </Text>
       </View>
       <Btn
-        label="选择模型"
+        label={tr("选择模型", "Choose models")}
         size="sm"
         variant="primary"
         icon="Plus"
@@ -451,6 +476,7 @@ export function CompatiblePicker({
   testID?: string;
 }) {
   const { theme, compact } = useLayout();
+  const { tr, lang } = useTr();
   const t = useTokens(theme, compact);
   const bound = new Set(
     snapshot.bindings.filter((entry) => entry.agent === agent.id).map((entry) => entry.connection),
@@ -484,16 +510,18 @@ export function CompatiblePicker({
             gap: 5,
           }}
         >
-          <Text style={t.bodyStrong}>没有可直接添加的连接</Text>
+          <Text style={t.bodyStrong}>{tr("没有可直接添加的连接", "No connection can be added directly")}</Text>
           <Text style={[t.tiny, { textAlign: "center" }]}>
-            {agent.label} 需要 {agent.protocols.map(protocolFullLabel).join(" / ")}。可以新建一个连接
-            {incompatible.length ? "，或处理下方协议不兼容的连接" : ""}。
+            {tr(
+              `${agent.label} 需要 ${agent.protocols.map(protocolFullLabel).join(" / ")}。可以新建一个连接${incompatible.length ? "，或处理下方协议不兼容的连接" : ""}。`,
+              `${agent.label} needs ${agent.protocols.map(protocolFullLabel).join(" / ")}. Create a connection${incompatible.length ? ", or adapt an incompatible one below" : ""}.`,
+            )}
           </Text>
         </View>
       )}
       {incompatible.length ? (
         <View style={{ gap: 6 }}>
-          <Text style={t.small}>协议不兼容</Text>
+          <Text style={t.small}>{tr("协议不兼容", "Incompatible protocol")}</Text>
           {incompatible.map((connection) => (
             <IncompatibleConnectionRow
               key={connection.id}
@@ -506,7 +534,7 @@ export function CompatiblePicker({
           ))}
         </View>
       ) : null}
-      <Btn label="新建连接" icon="Plus" onPress={onCreate} disabled={busy} fullWidth />
+      <Btn label={tr("新建连接", "New connection")} icon="Plus" onPress={onCreate} disabled={busy} fullWidth />
     </View>
   );
 }
@@ -525,6 +553,7 @@ function IncompatibleConnectionRow({
   onAdapt: (connection: Connection, mode: "switch" | "copy", protocol: Protocol) => void;
 }) {
   const { theme, compact } = useLayout();
+  const { tr, lang } = useTr();
   const t = useTokens(theme, compact);
   // Only the OpenAI pair is offered as a fix: the same base URL usually serves
   // both. Anthropic or Gemini connections have different URLs and model lists.
@@ -555,17 +584,31 @@ function IncompatibleConnectionRow({
           <Badge label={protocolLabel(connection.protocol)} />
         </View>
         <Text style={t.tiny}>
-          {agent.label} 需要 {agent.protocols.map(protocolLabel).join(" / ")}
-          {target
-            ? inUse
-              ? `。此连接正被其他 Agent 使用；若网关也提供 ${protocolDescription(target)}，可复制一份`
-              : `。若网关也提供 ${protocolDescription(target)}，可直接改用`
-            : "。"}
+          {tr(
+            `${agent.label} 需要 ${agent.protocols.map(protocolLabel).join(" / ")}${
+              target
+                ? inUse
+                  ? `。此连接正被其他 Agent 使用；若网关也提供 ${protocolDescription(target, lang)}，可复制一份`
+                  : `。若网关也提供 ${protocolDescription(target, lang)}，可直接改用`
+                : "。"
+            }`,
+            `${agent.label} needs ${agent.protocols.map(protocolLabel).join(" / ")}${
+              target
+                ? inUse
+                  ? `. Other agents use this connection; if the gateway also serves ${protocolDescription(target, lang)}, copy it`
+                  : `. If the gateway also serves ${protocolDescription(target, lang)}, switch it`
+                : "."
+            }`,
+          )}
         </Text>
       </View>
       {target ? (
         <Btn
-          label={inUse ? `复制为 ${protocolLabel(target)}` : `改为 ${protocolLabel(target)}`}
+          label={
+            inUse
+              ? tr(`复制为 ${protocolLabel(target)}`, `Copy as ${protocolLabel(target)}`)
+              : tr(`改为 ${protocolLabel(target)}`, `Switch to ${protocolLabel(target)}`)
+          }
           size="sm"
           variant="secondary"
           onPress={() => onAdapt(connection, inUse ? "copy" : "switch", target)}

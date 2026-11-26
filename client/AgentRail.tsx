@@ -3,7 +3,7 @@ import { Icon } from "@getpaseo/plugin/client/ui";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import { agentSummary, type AgentDescriptor } from "./derive";
 import { protocolLabel } from "./format";
-import { useLayout, useTokens, withAlpha } from "./ui";
+import { useLayout, useTokens, useTr, withAlpha } from "./ui";
 import { AGENT_SVGS } from "./agentIcons";
 
 const AGENT_ICON: Record<AgentId, string> = {
@@ -73,6 +73,7 @@ export function AgentRail({
   onSelect: (agent: AgentId) => void;
 }) {
   const { theme, compact } = useLayout();
+  const { tr } = useTr();
   const t = useTokens(theme, compact);
   const now = Date.now();
 
@@ -107,9 +108,14 @@ export function AgentRail({
             <Pressable
               key={descriptor.id}
               accessibilityRole="button"
-              accessibilityLabel={`${descriptor.label}，${summary.bound} 个连接，${summary.selected} 个模型${
-                summary.issues ? `，${summary.issues} 个待处理` : ""
-              }`}
+              accessibilityLabel={tr(
+                `${descriptor.label}，${summary.bound} 个连接，${summary.selected} 个模型${
+                  summary.issues ? `，${summary.issues} 个待处理` : ""
+                }`,
+                `${descriptor.label}, ${summary.bound} connections, ${summary.selected} models${
+                  summary.issues ? `, ${summary.issues} to review` : ""
+                }`,
+              )}
               accessibilityState={{ selected: active }}
               testID={`ppm-agent-${descriptor.id}`}
               onPress={() => onSelect(descriptor.id)}
@@ -150,10 +156,10 @@ export function AgentRail({
                 {!compact ? (
                   <Text numberOfLines={1} style={t.tiny}>
                     {descriptor.protocols.length === 0
-                      ? "原生模型目录"
+                      ? tr("原生模型目录", "Native model list")
                       : summary.bound
-                        ? `${summary.bound} 个连接 · ${summary.selected} 个模型`
-                        : "尚未配置"}
+                        ? tr(`${summary.bound} 个连接 · ${summary.selected} 个模型`, `${summary.bound} ${summary.bound === 1 ? "connection" : "connections"} · ${summary.selected} ${summary.selected === 1 ? "model" : "models"}`)
+                        : tr("尚未配置", "Not set up")}
                   </Text>
                 ) : null}
               </View>
@@ -199,6 +205,7 @@ export function AgentHeading({
   compact: boolean;
 }) {
   const { theme } = useLayout();
+  const { tr } = useTr();
   const t = useTokens(theme, compact);
   const summary = agentSummary(snapshot, descriptor.id);
   return (
@@ -227,8 +234,8 @@ export function AgentHeading({
           ))}
           <Text style={t.tiny}>
             {descriptor.protocols.length === 0
-              ? "原生模型目录"
-              : `${summary.bound} 个连接 · ${summary.selected} 个模型`}
+              ? tr("原生模型目录", "Native model list")
+              : tr(`${summary.bound} 个连接 · ${summary.selected} 个模型`, `${summary.bound} ${summary.bound === 1 ? "connection" : "connections"} · ${summary.selected} ${summary.selected === 1 ? "model" : "models"}`)}
           </Text>
         </View>
       </View>

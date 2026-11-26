@@ -1,4 +1,5 @@
 import type { PluginTheme } from "@getpaseo/plugin";
+import { pick, type Lang } from "../shared/i18n";
 import {
   copyText,
   Icon,
@@ -165,6 +166,8 @@ export function Badge({
 interface LayoutValue {
   theme: PluginTheme;
   compact: boolean;
+  /** The plugin's resolved UI language (settings: 跟随 Paseo / 简体中文 / English). */
+  lang: Lang;
 }
 
 const LayoutContext = React.createContext<LayoutValue | null>(null);
@@ -178,16 +181,27 @@ let fallbackLayout: LayoutValue | null = null;
 export function UiProvider({
   theme,
   compact,
+  lang,
   children,
 }: {
   theme: PluginTheme;
   compact: boolean;
+  lang: Lang;
   children: ReactNode;
 }) {
-  fallbackLayout = { theme, compact };
+  fallbackLayout = { theme, compact, lang };
   return (
-    <LayoutContext.Provider value={{ theme, compact }}>{children}</LayoutContext.Provider>
+    <LayoutContext.Provider value={{ theme, compact, lang }}>{children}</LayoutContext.Provider>
   );
+}
+
+/** `tr("中文", "English")` in the current UI language. */
+export type Translate = (zh: string, en: string) => string;
+
+export function useTr(): { tr: Translate; lang: Lang } {
+  const { lang } = useLayout();
+  const tr = React.useCallback<Translate>((zh, en) => pick(lang, zh, en), [lang]);
+  return { tr, lang };
 }
 
 export function useLayout(): LayoutValue {
@@ -271,14 +285,14 @@ export function Btn({
   testID?: string;
   accessibilityLabel?: string;
 }) {
-  const { theme, compact } = useLayout();
+  const { theme, compact, lang } = useLayout();
   const t = useTokens(theme, compact);
   const { colors } = theme;
   const blocked = disabled || pending;
   const height = size === "sm" ? 30 : compact ? 38 : 36;
   const paddingHorizontal = size === "sm" ? 9 : 13;
   const palette = buttonPalette(theme, variant);
-  const labelText = pending ? "处理中…" : label;
+  const labelText = pending ? pick(lang, "处理中…", "Working…") : label;
   return (
     <Pressable
       accessibilityRole="button"
@@ -670,7 +684,7 @@ export function TextField({
   trailing?: ReactNode;
   monospace?: boolean;
 }) {
-  const { theme, compact } = useLayout();
+  const { theme, compact, lang } = useLayout();
   const t = useTokens(theme, compact);
   const [focused, setFocused] = useState(false);
   const [revealed, setRevealed] = useState(false);
@@ -724,7 +738,7 @@ export function TextField({
       {secure && allowReveal ? (
         <IconBtn
           icon={revealed ? "EyeOff" : "Eye"}
-          label={revealed ? "隐藏密钥" : "显示密钥"}
+          label={revealed ? pick(lang, "隐藏密钥", "Hide key") : pick(lang, "显示密钥", "Show key")}
           onPress={() => setRevealed((current) => !current)}
           size={26}
         />
@@ -743,7 +757,7 @@ export function TextField({
 export function SearchField({
   value,
   onChangeText,
-  placeholder = "搜索",
+  placeholder,
   testID,
 }: {
   value: string;
@@ -751,7 +765,7 @@ export function SearchField({
   placeholder?: string;
   testID?: string;
 }) {
-  const { theme, compact } = useLayout();
+  const { theme, compact, lang } = useLayout();
   const [focused, setFocused] = useState(false);
   return (
     <View
@@ -775,7 +789,7 @@ export function SearchField({
         accessibilityLabel={placeholder}
         value={value}
         onChangeText={onChangeText}
-        placeholder={placeholder}
+        placeholder={placeholder ?? pick(lang, "搜索", "Search")}
         placeholderTextColor={theme.colors.foregroundMuted}
         autoCorrect={false}
         autoCapitalize="none"
@@ -790,7 +804,7 @@ export function SearchField({
         }}
       />
       {value ? (
-        <IconBtn icon="X" label="清空搜索" onPress={() => onChangeText("")} size={24} />
+        <IconBtn icon="X" label={pick(lang, "清空搜索", "Clear search")} onPress={() => onChangeText("")} size={24} />
       ) : null}
     </View>
   );
@@ -813,13 +827,13 @@ export function Sheet({
   footer?: ReactNode;
   testID?: string;
 }) {
-  const { theme, compact } = useLayout();
+  const { theme, compact, lang } = useLayout();
   return (
     <Modal open={open} onOpenChange={onOpenChange} title={title} icon={icon}>
       <Modal.Content scrollable={false} contentContainerStyle={{ padding: 0, gap: 0 }}>
         {/* Host modals mount their content in a separate root, so the screen's
             provider cannot be assumed. Re-provide theme/layout for body and footer. */}
-        <UiProvider theme={theme} compact={compact}>
+        <UiProvider theme={theme} compact={compact} lang={lang}>
           <View
             testID={testID}
             style={{
@@ -880,7 +894,7 @@ export function ConfirmDialog({
   onCancel: () => void;
   testID?: string;
 }) {
-  const { theme, compact } = useLayout();
+  const { theme, compact, lang } = useLayout();
   const t = useTokens(theme, compact);
   return (
     <Modal
@@ -892,11 +906,11 @@ export function ConfirmDialog({
       icon={<Icon name="AlertTriangle" size={18} color={theme.colors.statusDanger} />}
     >
       <Modal.Content scrollable={false}>
-        <UiProvider theme={theme} compact={compact}>
+        <UiProvider theme={theme} compact={compact} lang={lang}>
           <View testID={testID} style={{ gap: 16 }}>
             <Text style={[t.body, { color: theme.colors.foregroundMuted }]}>{description}</Text>
             <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
-              <Btn label="取消" onPress={onCancel} disabled={pending} />
+              <Btn label={pick(lang, "取消", "Cancel")} onPress={onCancel} disabled={pending} />
               <Btn
                 label={confirmLabel}
                 onPress={onConfirm}
@@ -1014,18 +1028,19 @@ export function KeyValue({ label, value }: { label: string; value: string }) {
   );
 }
 
-export function CopyButton({ text, label = "复制" }: { text: string; label?: string }) {
+export function CopyButton({ text, label }: { text: string; label?: string }) {
   const toast = useToast();
+  const { lang } = useLayout();
   return (
     <Btn
-      label={label}
+      label={label ?? pick(lang, "复制", "Copy")}
       variant="ghost"
       size="sm"
       icon="Copy"
       onPress={() => {
         void copyText(text).then(
-          () => toast.show("已复制", { variant: "success" }),
-          () => toast.error("复制失败"),
+          () => toast.show(pick(lang, "已复制", "Copied"), { variant: "success" }),
+          () => toast.error(pick(lang, "复制失败", "Copy failed")),
         );
       }}
     />

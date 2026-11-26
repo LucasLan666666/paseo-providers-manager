@@ -2,6 +2,7 @@ import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import type { AgentId, Protocol } from "../shared/contracts";
 import { protocolInfo } from "../shared/protocols";
+import { L } from "./i18n";
 
 /** The fields the manager asks an adapter to turn into a native provider. */
 export interface AdapterModel {
@@ -52,12 +53,12 @@ export const MODEL_PREFIX = "ppm";
 const MODEL_ID = /^[^\0\r\n]{1,2048}$/;
 
 export function assertModels(models: readonly AdapterModel[]): void {
-  if (!models.length) throw new Error("至少选择一个模型后再启用该 agent。");
+  if (!models.length) throw new Error(L("至少选择一个模型后再启用该 agent。", "Select at least one model to enable this agent."));
   const seen = new Set<string>();
   for (const model of models) {
     if (typeof model.id !== "string" || !MODEL_ID.test(model.id))
-      throw new Error("模型 ID 不能为空，且不能包含控制字符。");
-    if (seen.has(model.id)) throw new Error(`模型 ${model.id} 重复启用。`);
+      throw new Error(L("模型 ID 不能为空，且不能包含控制字符。", "A model id cannot be empty or contain control characters."));
+    if (seen.has(model.id)) throw new Error(L(`模型 ${model.id} 重复启用。`, `Model ${model.id} is enabled twice.`));
     seen.add(model.id);
   }
 }
@@ -69,9 +70,14 @@ export function assertProtocol(
 ): void {
   if (!supported.includes(protocol)) {
     throw new Error(
-      `${agent} 不支持 ${protocolInfo[protocol].label} 协议；可用协议：${supported
-        .map((item) => protocolInfo[item].label)
-        .join("、")}。`,
+      L(
+        `${agent} 不支持 ${protocolInfo[protocol].label} 协议；可用协议：${supported
+          .map((item) => protocolInfo[item].label)
+          .join("、")}。`,
+        `${agent} does not support the ${protocolInfo[protocol].label} protocol; supported: ${supported
+          .map((item) => protocolInfo[item].label)
+          .join(", ")}.`,
+      ),
     );
   }
 }
@@ -82,14 +88,14 @@ export function endpoint(raw: string): string {
   try {
     url = new URL(raw);
   } catch {
-    throw new Error("网关地址无效。");
+    throw new Error(L("网关地址无效。", "Invalid gateway URL."));
   }
   if (url.protocol !== "http:" && url.protocol !== "https:")
-    throw new Error("网关地址必须使用 HTTP 或 HTTPS。");
+    throw new Error(L("网关地址必须使用 HTTP 或 HTTPS。", "The gateway URL must use HTTP or HTTPS."));
   if (url.username || url.password)
-    throw new Error("网关地址不能包含用户名或密码。");
+    throw new Error(L("网关地址不能包含用户名或密码。", "The gateway URL cannot contain a username or password."));
   if (url.search || url.hash)
-    throw new Error("网关地址不能包含查询参数或片段。");
+    throw new Error(L("网关地址不能包含查询参数或片段。", "The gateway URL cannot contain a query or fragment."));
   return url.href.replace(/\/+$/, "");
 }
 
@@ -175,7 +181,10 @@ export function modelChoices(
     const id = pickerModelId(agent, model.id);
     if (seen.has(id))
       throw new Error(
-        `模型 ${model.id} 映射到重复的选择 ID ${id}，请只启用其中一个（Antigravity 使用 -low/-medium/-high/-xhigh 变体）。`,
+        L(
+          `模型 ${model.id} 映射到重复的选择 ID ${id}，请只启用其中一个（Antigravity 使用 -low/-medium/-high/-xhigh 变体）。`,
+          `Model ${model.id} maps to the duplicate picker id ${id}; enable only one (Antigravity uses -low/-medium/-high/-xhigh variants).`,
+        ),
       );
     seen.add(id);
     return {
@@ -193,7 +202,10 @@ export function requireLimits(
   for (const model of models) {
     if (!model.context || !model.output)
       throw new Error(
-        `${agent} 需要模型 ${model.id} 的上下文窗口和最大输出，请填写后再启用。`,
+        L(
+          `${agent} 需要模型 ${model.id} 的上下文窗口和最大输出，请填写后再启用。`,
+          `${agent} needs the context window and max output of ${model.id}. Fill them in to enable it.`,
+        ),
       );
   }
   return models as Array<AdapterModel & { context: number; output: number }>;
