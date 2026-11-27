@@ -153,9 +153,9 @@ export function antigravityPickerId(rawId: string): string | undefined {
   const match = /^(.*)-(low|medium|high|xhigh)$/.exec(id);
   if (match) {
     const efforts = ANTIGRAVITY_EFFORTS[match[1]];
-    return efforts?.includes(match[2]) ? id : undefined;
+    return Object.hasOwn(ANTIGRAVITY_EFFORTS, match[1]) && efforts.includes(match[2]) ? id : undefined;
   }
-  if (ANTIGRAVITY_EFFORTS[id]) {
+  if (Object.hasOwn(ANTIGRAVITY_EFFORTS, id)) {
     // High exists for every ACP-listed Antigravity model; medium does not for 3.1 Pro.
     return `${id}-high`;
   }
@@ -191,9 +191,22 @@ export function modelChoices(
         ),
       );
     seen.add(id);
+    // agy exposes thought_level separately from its effort-qualified model IDs.
+    // Keep those IDs for existing sessions and publish the same per-family levels.
+    const split = id.lastIndexOf("-");
+    const efforts = agent === "antigravity" && antigravityPickerId(id)
+      ? ANTIGRAVITY_EFFORTS[id.slice(0, split)]
+      : undefined;
     return {
       id,
       label: model.label.trim() || model.id,
+      ...(efforts ? {
+        thinkingOptions: efforts.map((effort) => ({
+          id: effort,
+          label: effort,
+          ...(effort === id.slice(split + 1) ? { isDefault: true } : {}),
+        })),
+      } : {}),
       ...(index === 0 ? { isDefault: true } : {}),
     };
   });

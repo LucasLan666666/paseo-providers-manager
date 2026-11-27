@@ -293,6 +293,19 @@ test("Antigravity shares ~/.gemini except the gateway settings file", async () =
       [{ id: "gemini-4-argon", label: "Argon" }],
       join(root, "gen"),
     );
+    assert.equal(built.models[0].id, "gemini-4-argon-high");
+    assert.deepEqual(built.models[0].thinkingOptions, [
+      { id: "low", label: "low" },
+      { id: "medium", label: "medium" },
+      { id: "high", label: "high", isDefault: true },
+    ]);
+    const [pro, neon] = modelChoices("antigravity", [
+      { id: "models/gemini-3.1-pro-low", label: "Pro" },
+      { id: "gemini-4-neon", label: "Neon" },
+    ]);
+    assert.deepEqual(pro.thinkingOptions?.map(o => o.id), ["low", "high"]);
+    assert.equal(pro.thinkingOptions?.find(o => o.isDefault)?.id, "low");
+    assert.deepEqual(neon.thinkingOptions?.map(o => o.id), ["low", "medium", "high", "xhigh"]);
     const privateGemini = join(built.env.HOME, ".gemini");
     assert.equal(await readlink(join(privateGemini, "skills")), join(fakeHome, ".gemini", "skills"));
     assert.equal(await readlink(join(privateGemini, "GEMINI.md")), join(fakeHome, ".gemini", "GEMINI.md"));

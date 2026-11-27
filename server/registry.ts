@@ -37,7 +37,7 @@ const GENERATOR_VERSIONS: Partial<Record<Binding["agent"], number>> = {
   pi: 2,
   omp: 2,
   opencode: 3,
-  antigravity: 2,
+  antigravity: 3,
 };
 
 /**

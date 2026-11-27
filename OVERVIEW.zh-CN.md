@@ -9,7 +9,7 @@
 - **GitHub Copilot**：Chat Completions、Responses 或 Anthropic Messages 网关，通过 Copilot CLI 的 providers 配置。
 - **OpenCode**：Chat Completions、Responses 或 Anthropic Messages 网关，逐模型上限、能力与密钥写入私有文件，并在打开会话时按连接注入以隔离多个网关。
 - **Pi / Oh My Pi**：Chat Completions、Responses 或 Anthropic Messages 网关，逐模型写入上下文窗口、最大输出和能力。
-- **Antigravity**：Gemini 兼容网关 + 原生 agy ACP 会话。agy ACP 的模型选择器只接受它内置的模型名（例如 `gemini-4-argon`、`gemini-3.1-pro`，可带 `-low/-medium/-high/-xhigh`）；插件会把网关模型映射到这些名称。
+- **Antigravity**：Gemini 兼容网关 + 原生 agy ACP 会话。agy ACP 的模型选择器只接受它内置的模型名（例如 `gemini-4-argon`、`gemini-3.1-pro`，可带 `-low/-medium/-high/-xhigh`）；插件会把网关模型映射到这些名称。在 Paseo 会话中可选择当前模型支持的思考深度。
 - **fx**：Chat Completions、Responses 或 Anthropic Messages 网关，写入 fx 的 `settings.json`。
 - **Muse Code / Hoplite**：没有可验证的自定义推理网关接口，只能检查并使用各自账号的模型目录。
 
