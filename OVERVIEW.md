@@ -9,7 +9,7 @@ Requires Paseo 0.17.4 or a later compatible version, with each agent's CLI insta
 - **GitHub Copilot**: Chat Completions, Responses or Anthropic Messages gateway, through the Copilot CLI's providers file.
 - **OpenCode**: Chat Completions, Responses or Anthropic Messages gateway, with per-model context window, max output and capabilities stored in private files and injected when opening a session so multiple gateways stay isolated.
 - **Pi / Oh My Pi**: Chat Completions, Responses or Anthropic Messages gateway, with per-model context window, max output and capabilities.
-- **Antigravity**: Gemini-compatible gateway plus native agy ACP sessions. agy's ACP model picker only accepts its built-in names (for example `gemini-4-argon` or `gemini-3.1-pro`, optionally with `-low/-medium/-high/-xhigh`); gateway models are mapped onto them.
+- **Antigravity**: Gemini-compatible gateway plus native agy ACP sessions. agy's ACP model picker only accepts its built-in names (for example `gemini-4-argon` or `gemini-3.1-pro`, optionally with `-low/-medium/-high/-xhigh`); gateway models are mapped onto them. Choose the thinking level in Paseo for the selected model.
 - **fx**: Chat Completions, Responses or Anthropic Messages gateway, written to fx's `settings.json`.
 - **Muse Code / Hoplite**: no verifiable custom inference gateway; only their own account model lists can be checked and used.
 

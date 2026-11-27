@@ -1,7 +1,7 @@
 {
   "name": "paseo-providers-manager",
   "private": true,
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Manage shared AI gateway connections, model limits, and per-agent model pickers across Paseo coding agents.",
   "license": "MIT",
   "repository": {
